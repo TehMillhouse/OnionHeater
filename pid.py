@@ -17,6 +17,11 @@ class Sim(object):
         for i in range(shells):
             self.data.append(list([ENV_TEMP]))
         self.controller.set_target(target)
+        self.modifications_todo = []
+
+    def disturb(self, degrees=-10, in_ticks=10, duration=20):
+        self.modifications_todo += [(in_ticks + i, degrees) for i in range(duration)]
+        self.modifications_todo.sort(key=lambda mod: mod[0])
 
     def dissipate_temps(self):
         # heat dissipation within metal
@@ -39,11 +44,25 @@ class Sim(object):
         # the outermost shell is always at ENV_TEMP
         self.temp_shells[-1] = ENV_TEMP
 
+    def _pop_disturbance(self):
+        mod = 0
+        occurred = 0
+        for i in range(len(self.modifications_todo)):
+            time_left, until_mod = self.modifications_todo[i]
+            if time_left == 0:
+                mod += until_mod
+                occurred += 1
+            else:
+                self.modifications_todo[i] = (time_left - 1, until_mod)
+        self.modifications_todo = self.modifications_todo[occurred:]
+        return mod
+
     def simulate_tick(self):
         cont = self.controller
-        cont.record_sample(self.sensor_temp())
-        self.temp_shells[0] += cont.get_decision() * cont.power
-        self.controller_decisions.append(cont.get_decision())
+        cont.record_sample(self.sensor_temp() + self._pop_disturbance())
+        heater_output = cont.make_decision()
+        self.temp_shells[0] += heater_output * cont.power
+        self.controller_decisions.append(heater_output)
         self.dissipate_temps()
         self.dissipate_temps()
         for i in range(len(self.temp_shells)):
@@ -126,8 +145,11 @@ class OnionController(object):
         ground_truth = self.history[hist_idx]
         heater_output = ground_truth.heater_output
         # ground the ground truth in... truth? Anyway, scale the model so it confirms to reality
-        scale = ground_truth.sensor_temp / ground_truth.shells[-2]
-        shells = [scale * temp for temp in ground_truth.shells]
+        error = ground_truth.sensor_temp - ground_truth.shells[-2]
+        if abs(error) > 5:
+            print(f"Significant divergence of {error} degrees from model at time {source_time}")
+        shells = list(ground_truth.shells)
+        shells[-2] = ground_truth.sensor_temp
         prediction = []
         for tick in range(target_time - source_time):
             shells[0] += heater_output * self.power
@@ -145,7 +167,7 @@ class OnionController(object):
         self.history.record_new(record)
 
     # precondition: record_sample has been run this tick
-    def get_decision(self):
+    def make_decision(self):
         action = self.extrapolate(self.time, self.time+1)[0]
         self.history[0].shells = action.shells
         self.shells = action.shells
