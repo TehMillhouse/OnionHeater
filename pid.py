@@ -33,9 +33,6 @@ class HistItem(object):
         self.shells         = shells
         self.cooling_factor = cooling_factor
 
-def clamp(value, lower, upper):
-    return max(lower, min(upper, value))
-
 class OnionController(object):
     # internally models hotend as made of shells of metal surrounded by air
     # heater is in innermost shell (0), sensor in outermost metal shell
@@ -58,7 +55,6 @@ class OnionController(object):
     def extrapolate(self, source_time, target_time):
         # take source_time history item as ground truth, ignore rest of history since
         hist_idx = source_time - self.time
-        print(hist_idx)
         ground_truth = self.history[hist_idx]
         heater_output = ground_truth.heater_output
         # ground the ground truth in... truth? Anyway, scale the model so it confirms to reality
@@ -80,16 +76,18 @@ class OnionController(object):
 
     def record_sample(self, temp, cooling_factor=1.0):
         self.time += 1
-        record = HistItem(self.time, temp, 0.0, list(self.shells), cooling_factor)
+        record = HistItem(self.time, temp, None, list(self.shells), cooling_factor)
         self.history.record_new(record)
 
-    # precondition: record_sample has been run this tick
-    def make_decision(self):
-        action = self.extrapolate(self.time, self.time+1)[0]
+        action = self.extrapolate(self.time-1, self.time)[0]
         self.history[0].shells = action.shells
         self.shells = action.shells
         self.history[0].heater_output = action.heater_output
         return action.heater_output
+
+    def get_decision(self):
+        assert not self.history[0].heater_output is None
+        return self.history[0].heater_output
 
     def dissipate_temps(self, shells, env_cooling_factor=1.0):
         # heat dissipation within metal

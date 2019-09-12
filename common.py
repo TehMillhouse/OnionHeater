@@ -6,3 +6,6 @@ WINDOW_SIZE = 8  # number of ticks to use for estimation of current thermal egre
 HEAT_CONDUCT_METAL = 0.4
 HEAT_CONDUCT_AIR = 0.4 / 200
 
+def clamp(value, lower, upper):
+    return max(lower, min(upper, value))
+
