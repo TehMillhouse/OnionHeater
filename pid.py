@@ -44,7 +44,7 @@ class OnionController(object):
         self.shells = [initial_temp] * shells
         self.dissipation_passes = dissipation_passes
         if history_length is None:
-            history_length = 2*shells
+            history_length = max(2*shells, WINDOW_SIZE+1)
         self.history = History([ HistItem(-history_length + i + 1, initial_temp, 0, list(self.shells)) for i in reversed(range(history_length)) ])
         self.target = initial_temp
         self.time = 0
@@ -79,7 +79,9 @@ class OnionController(object):
             # to bringt the average temperature to setpoint. However! Since we're constantly losing heat
             # through convection, there will always be a temperature gradient in the hotend. Since we
             # want *the sensor* to be at setpoint, that won't be enough.
-            degrees_needed = (self.target + egress * egress_factor - heater_avg_temp) * len(self.shells)
+
+            # TODO: better formula for what exactly we are aiming for...
+            degrees_needed = (self.target + egress * egress_factor + (self.target - shells[-2]) - heater_avg_temp) * len(self.shells)
             heater_output = clamp( degrees_needed / self.power, 0.0, 1.0)
             prediction.append(HistItem(source_time+tick+1, None, heater_output, list(shells)))
         return prediction
@@ -96,9 +98,9 @@ class OnionController(object):
             h2 = self.history[hist_idx - i]
             measured_loss = h1.sensor_temp - h2.sensor_temp
             predicted_loss = h1.shells[-2] - h2.shells[-2]
-            print(f"m: {measured_loss}     p: {predicted_loss} --> egress {measured_loss - predicted_loss}")
             if measured_loss - predicted_loss > 0:
                 egress += measured_loss - predicted_loss
+        print(f"predicted egress: {egress / WINDOW_SIZE}")
         return egress / WINDOW_SIZE
 
     def record_sample(self, temp, cooling_factor=1.0):
@@ -129,6 +131,7 @@ class OnionController(object):
             if i < len(shells)-2:
                 shells[hi] -= HEAT_CONDUCT_METAL * temp_diff
                 shells[lo] += HEAT_CONDUCT_METAL * temp_diff
+            # TODO: should this be in the model to begin with?
             #else:
             #    # heat exchange between metal and cooling air
             #    shells[hi] -= env_cooling_factor * HEAT_CONDUCT_AIR * temp_diff

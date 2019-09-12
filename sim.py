@@ -1,10 +1,13 @@
 
 import matplotlib.pyplot as plt
+import random
+import math
 from common import *
 from pid import OnionController
 
+
 class Sim(object):
-    def __init__(self, target, shells, power, dissipation_passes=2):
+    def __init__(self, target, shells, power, randomness=0, dissipation_passes=2):
         self.controller = OnionController(shells, power, dissipation_passes)
         # heater is at first (innermost) shell, sensor at second-to-last shell, outermost shell is outside
         self.temp_shells = [ENV_TEMP] * shells
@@ -14,11 +17,30 @@ class Sim(object):
             self.controller_data.append(list([0.0]))
         self.controller_decisions = [0.0]
         self.modifications_todo = []
+        self.randomness = randomness
 
         self.controller.set_target(target)
 
+    def _S(self, x):
+        return 1 / (1 + math.exp(-x))
+
+    def _bell(self,x):
+        if x < 0:
+            return self._S(x*2+6)
+        return self._S(-x*2+6)
+
     def disturb(self, degrees=-4, in_ticks=10, duration=20):
-        self.modifications_todo += [(in_ticks + i, degrees) for i in range(duration)]
+        def disturbance(tick):
+            if tick < 6:
+                return degrees * self._bell(tick-6)
+            if tick >= duration-6:
+                return degrees * self._bell(6 - duration + tick)
+            return degrees
+        self.modifications_todo += [(in_ticks + i, disturbance(i) + random.random() * self.randomness) for i in range(duration)]
+        self.modifications_todo.sort(key=lambda mod: mod[0])
+
+    def disturb_hard(self, degrees=-4, in_ticks=10, duration=20):
+        self.modifications_todo += [(in_ticks + i, degrees + random.random() * self.randomness) for i in range(duration)]
         self.modifications_todo.sort(key=lambda mod: mod[0])
 
     def dissipate_temps(self):
@@ -58,7 +80,7 @@ class Sim(object):
 
     def tick(self):
         cont = self.controller
-        effective_temp = self.sensor_temp() + self._pop_disturbance()
+        effective_temp = self.sensor_temp() + self._pop_disturbance() + random.random() * self.randomness
         self.temperature_history.append(effective_temp)
         cont.record_sample(effective_temp)
         heater_output = cont.get_decision()
