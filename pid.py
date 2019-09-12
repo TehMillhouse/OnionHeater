@@ -8,8 +8,8 @@ HEAT_CONDUCT_METAL = 0.4
 HEAT_CONDUCT_AIR = 0.4 / 200
 
 class Sim(object):
-    def __init__(self, target, shells, power, smoothing_passes):
-        self.controller = OnionController(shells, power, smoothing_passes)
+    def __init__(self, target, shells, power, dissipation_passes):
+        self.controller = OnionController(shells, power, dissipation_passes)
         self.controller_decisions = [0.0]
         # heater is at first (innermost) shell, sensor at second-to-last shell, outermost shell is outside
         self.temp_shells = [ENV_TEMP] * shells
@@ -123,18 +123,18 @@ def clamp(value, lower, upper):
 class OnionController(object):
     # internally models hotend as made of shells of metal surrounded by air
     # heater is in innermost shell (0), sensor in outermost metal shell
-    # heat gradients are smoothed, w/ different conductivity b/ween air & metal
+    # heat gradients are smoothed, w/ different conductivity b/w air & metal
 
-    def __init__(self, shells, power, smoothing_passes=2, history_length=None, initial_temp=ENV_TEMP):
+    def __init__(self, shells, power, dissipation_passes=2, history_length=None, initial_temp=ENV_TEMP):
         self.power = power
         # heater is at first (innermost) shell, sensor at second-to-last shell, outermost shell is outside
         self.shells = [initial_temp] * shells
-        self.smoothing_passes = smoothing_passes
+        self.dissipation_passes = dissipation_passes
         if history_length is None:
             history_length = 2*shells
-        self.history = History([ HistItem(i, initial_temp, 0, list(self.shells)) for i in range(history_length) ])
+        self.history = History([ HistItem(i, initial_temp, 0, list(self.shells)) for i in reversed(range(history_length)) ])
         self.target = initial_temp
-        self.time = history_length
+        self.time = history_length-1
 
     def set_target(self, target):
         self.target = target
@@ -142,6 +142,7 @@ class OnionController(object):
     def extrapolate(self, source_time, target_time):
         # take source_time history item as ground truth, ignore rest of history since
         hist_idx = source_time - self.time
+        print(hist_idx)
         ground_truth = self.history[hist_idx]
         heater_output = ground_truth.heater_output
         # ground the ground truth in... truth? Anyway, scale the model so it confirms to reality
@@ -154,7 +155,7 @@ class OnionController(object):
         for tick in range(target_time - source_time):
             shells[0] += heater_output * self.power
             # todo cooling factor?
-            for _ in range(self.smoothing_passes):
+            for _ in range(self.dissipation_passes):
                 self.dissipate_temps(shells, ground_truth.cooling_factor)
             heater_avg_temp = sum(shells[:-1]) / (len(shells)-1)
             heater_output = clamp( (self.target - heater_avg_temp) / self.power, 0.0, 1.0)
