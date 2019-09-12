@@ -118,7 +118,7 @@ class OnionController(object):
         return self.history[0].heater_output
 
     def dissipate_temps(self, shells, env_cooling_factor=1.0):
-        # heat dissipation within metal
+        # heat dissipation scales with temperature differential
         for i in range(len(shells)-1):
             if shells[i] > shells[i+1]:
                 hi = i

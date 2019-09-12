@@ -1,0 +1,23 @@
+Heating test on my printer: setpoint 130, high enough to have heater fully accelerated
+
+= Tick length:
+about 6 samples in 5 seconds
+--> 0.833 seconds per tick
+5-6 ticks until temperature visibly changes
+
+= Heater power:
+fully accelerated, took from 03.017 until 17.01 to heat from 87.8°C to 116°C
+--> timespan: 13.993 seconds
+--> delta temp: 28.2°C
+--> 2.0166 °C/s
+
+= Cooling:
+Room temperature is 21.4°C
+Without fan, measured around hotend 119.8°C:
+took from 16.015 until 46.022 to cool from 127.7°C to 112.3°C
+--> temperature lost: 15.4°C
+--> timespan: 30 seconds
+==> heat flux: 0.5132 °C/s
+--> temperature differential: 98.4 °C
+
+==> cooling about 0.005216°C/s for every degree of temperature differential

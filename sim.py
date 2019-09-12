@@ -7,7 +7,7 @@ from pid import OnionController
 
 
 class Sim(object):
-    def __init__(self, target, shells, power, randomness=0, dissipation_passes=2):
+    def __init__(self, target, shells, power=HEATER_POWER, randomness=NOISE_AMP, dissipation_passes=2):
         self.controller = OnionController(shells, power, dissipation_passes)
         # heater is at first (innermost) shell, sensor at second-to-last shell, outermost shell is outside
         self.temp_shells = [ENV_TEMP] * shells
@@ -20,6 +20,9 @@ class Sim(object):
         self.randomness = randomness
 
         self.controller.set_target(target)
+
+    def _noise(self):
+        return random.random() * self.randomness - 0.5 * self.randomness
 
     def _S(self, x):
         return 1 / (1 + math.exp(-x))
@@ -36,11 +39,11 @@ class Sim(object):
             if tick >= duration-6:
                 return degrees * self._bell(6 - duration + tick)
             return degrees
-        self.modifications_todo += [(in_ticks + i, disturbance(i) + random.random() * self.randomness) for i in range(duration)]
+        self.modifications_todo += [(in_ticks + i, disturbance(i) + self._noise()) for i in range(duration)]
         self.modifications_todo.sort(key=lambda mod: mod[0])
 
     def disturb_hard(self, degrees=-4, in_ticks=10, duration=20):
-        self.modifications_todo += [(in_ticks + i, degrees + random.random() * self.randomness) for i in range(duration)]
+        self.modifications_todo += [(in_ticks + i, degrees + self._noise()) for i in range(duration)]
         self.modifications_todo.sort(key=lambda mod: mod[0])
 
     def dissipate_temps(self):
@@ -80,7 +83,7 @@ class Sim(object):
 
     def tick(self):
         cont = self.controller
-        effective_temp = self.sensor_temp() + self._pop_disturbance() + random.random() * self.randomness
+        effective_temp = self.sensor_temp() + self._pop_disturbance() + self._noise()
         self.temperature_history.append(effective_temp)
         cont.record_sample(effective_temp)
         heater_output = cont.get_decision()
