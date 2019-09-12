@@ -52,37 +52,63 @@ class OnionController(object):
     def set_target(self, target):
         self.target = target
 
-    def extrapolate(self, source_time, target_time):
+    def extrapolate(self, source_time, target_time, cooling_factor):
         # take source_time history item as ground truth, ignore rest of history since
         hist_idx = source_time - self.time
         ground_truth = self.history[hist_idx]
         heater_output = ground_truth.heater_output
         # ground the ground truth in... truth? Anyway, scale the model so it confirms to reality
         error = ground_truth.sensor_temp - ground_truth.shells[-2]
-        if abs(error) > 5:
+        if abs(error) != 0:
             print(f"Significant divergence of {error} degrees from model at time {source_time}")
         shells = list(ground_truth.shells)
         shells[-2] = ground_truth.sensor_temp
         prediction = []
+        # todo: cooling factor
+        egress = self.estimate_egress(hist_idx)  # extrapolate based on constant egress
+        egress_delta_t = shells[-2] - shells[-1]  # amount of convective cooling is ~linear in temp difference
         for tick in range(target_time - source_time):
             shells[0] += heater_output * self.power
-            # todo cooling factor?
+
+            egress_factor = ((shells[-2] - shells[-1]) / egress_delta_t) if egress_delta_t != 0 else 1
+            shells[-2] -= egress * egress_factor
             for _ in range(self.dissipation_passes):
                 self.dissipate_temps(shells, ground_truth.cooling_factor)
             heater_avg_temp = sum(shells[:-1]) / (len(shells)-1)
-            heater_output = clamp( (self.target - heater_avg_temp) / self.power, 0.0, 1.0)
+            # How much should we heat? Since we have a full thermal model, we could just heat just enough
+            # to bringt the average temperature to setpoint. However! Since we're constantly losing heat
+            # through convection, there will always be a temperature gradient in the hotend. Since we
+            # want *the sensor* to be at setpoint, that won't be enough.
+            degrees_needed = (self.target + egress * egress_factor - heater_avg_temp) * len(self.shells)
+            heater_output = clamp( degrees_needed / self.power, 0.0, 1.0)
             prediction.append(HistItem(source_time+tick+1, None, heater_output, list(shells)))
         return prediction
 
-    def record_sample(self, temp, cooling_factor=1.0):
-        self.time += 1
-        record = HistItem(self.time, temp, None, list(self.shells), cooling_factor)
-        self.history.record_new(record)
+    def estimate_egress(self, hist_idx):
+        # how much energy are we losing at a given time through convection, filament, etc.?
+        # This is useful to know because we can assume that we will lose about as much in the future
+        # It also lets us rapidly correct for sudden gusts of wind, etc.
+        egress = 0.0
+        # we attribute to thermal egress whatever energy loss *has been measured* that is *not* accounted for
+        # in our model of thermal dissipation
+        for i in range(WINDOW_SIZE):
+            h1 = self.history[hist_idx - i - 1]
+            h2 = self.history[hist_idx - i]
+            measured_loss = h1.sensor_temp - h2.sensor_temp
+            predicted_loss = h1.shells[-2] - h2.shells[-2]
+            print(f"m: {measured_loss}     p: {predicted_loss} --> egress {measured_loss - predicted_loss}")
+            if measured_loss - predicted_loss > 0:
+                egress += measured_loss - predicted_loss
+        return egress / WINDOW_SIZE
 
-        action = self.extrapolate(self.time-1, self.time)[0]
-        self.history[0].shells = action.shells
+    def record_sample(self, temp, cooling_factor=1.0):
+        action = self.extrapolate(self.time, self.time+1, cooling_factor)[0]
+        self.time += 1
+        # record = HistItem(self.time, temp, None, list(self.shells), cooling_factor)
+        action.sensor_temp = temp
+        self.history.record_new(action)
+
         self.shells = action.shells
-        self.history[0].heater_output = action.heater_output
         return action.heater_output
 
     def get_decision(self):
@@ -103,10 +129,10 @@ class OnionController(object):
             if i < len(shells)-2:
                 shells[hi] -= HEAT_CONDUCT_METAL * temp_diff
                 shells[lo] += HEAT_CONDUCT_METAL * temp_diff
-            else:
-                # heat exchange between metal and cooling air
-                shells[hi] -= env_cooling_factor * HEAT_CONDUCT_AIR * temp_diff
-                shells[lo] += env_cooling_factor * HEAT_CONDUCT_AIR * temp_diff
+            #else:
+            #    # heat exchange between metal and cooling air
+            #    shells[hi] -= env_cooling_factor * HEAT_CONDUCT_AIR * temp_diff
+            #    shells[lo] += env_cooling_factor * HEAT_CONDUCT_AIR * temp_diff
         # the outermost shell is always at ENV_TEMP
         shells[-1] = ENV_TEMP
 

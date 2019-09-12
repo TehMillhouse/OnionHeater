@@ -10,7 +10,7 @@ class Sim(object):
         self.temp_shells = [ENV_TEMP] * shells
         self.controller_data = []
         self.temperature_history = [0.0]
-        for i in range(shells):
+        for i in range(len(self.controller.shells)):
             self.controller_data.append(list([0.0]))
         self.controller_decisions = [0.0]
         self.modifications_todo = []
@@ -40,6 +40,7 @@ class Sim(object):
                 self.temp_shells[hi] -= HEAT_CONDUCT_AIR * temp_diff
                 self.temp_shells[lo] += HEAT_CONDUCT_AIR * temp_diff
         # the outermost shell is always at ENV_TEMP
+        print(f"true egress: {self.temp_shells[-1] - ENV_TEMP}")
         self.temp_shells[-1] = ENV_TEMP
 
     def _pop_disturbance(self):
