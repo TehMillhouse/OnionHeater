@@ -45,9 +45,9 @@ class OnionController(object):
         self.dissipation_passes = dissipation_passes
         if history_length is None:
             history_length = 2*shells
-        self.history = History([ HistItem(i, initial_temp, 0, list(self.shells)) for i in reversed(range(history_length)) ])
+        self.history = History([ HistItem(-history_length + i + 1, initial_temp, 0, list(self.shells)) for i in reversed(range(history_length)) ])
         self.target = initial_temp
-        self.time = history_length-1
+        self.time = 0
 
     def set_target(self, target):
         self.target = target

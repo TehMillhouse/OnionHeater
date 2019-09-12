@@ -17,7 +17,7 @@ class Sim(object):
 
         self.controller.set_target(target)
 
-    def disturb(self, degrees=-10, in_ticks=10, duration=20):
+    def disturb(self, degrees=-4, in_ticks=10, duration=20):
         self.modifications_todo += [(in_ticks + i, degrees) for i in range(duration)]
         self.modifications_todo.sort(key=lambda mod: mod[0])
 
@@ -57,13 +57,14 @@ class Sim(object):
 
     def tick(self):
         cont = self.controller
-        cont.record_sample(self.sensor_temp() + self._pop_disturbance())
+        effective_temp = self.sensor_temp() + self._pop_disturbance()
+        self.temperature_history.append(effective_temp)
+        cont.record_sample(effective_temp)
         heater_output = cont.get_decision()
         self.temp_shells[0] += heater_output * cont.power
         self.controller_decisions.append(heater_output)
         self.dissipate_temps()
         self.dissipate_temps()
-        self.temperature_history.append(self.temp_shells[-2])
         for i in range(len(cont.shells)):
             self.controller_data[i].append(cont.shells[i])
 
