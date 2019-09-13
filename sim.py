@@ -47,27 +47,27 @@ class Sim(object):
         self.modifications_todo += [(in_ticks + i, degrees + self._noise()) for i in range(duration)]
         self.modifications_todo.sort(key=lambda mod: mod[0])
 
-    def dissipate_temps(self):
-        # heat dissipation within metal
-        for i in range(len(self.temp_shells)-1):
-            if self.temp_shells[i] > self.temp_shells[i+1]:
-                hi = i
-                lo = i+1
-            else:
-                hi = i+1
-                lo = i
-            temp_diff = self.temp_shells[hi] - self.temp_shells[lo]
-            # different heat exchange factors for metal/metal and metal/air
-            if i < len(self.temp_shells)-2:
-                self.temp_shells[hi] -= HEAT_CONDUCT_METAL * temp_diff
-                self.temp_shells[lo] += HEAT_CONDUCT_METAL * temp_diff
-            else:
-                # heat exchange between metal and cooling air
-                self.temp_shells[hi] -= HEAT_CONDUCT_AIR * temp_diff
-                self.temp_shells[lo] += HEAT_CONDUCT_AIR * temp_diff
+
+
+    def dissipate_temps(self, env_cooling_factor=1.0):
+        # heat dissipation as cellular automaton: each shell independently calculates how much
+        # heat it exchanges with its neighbors
+        shells = self.temp_shells
+        next_shells = list(self.temp_shells)
+        for i in range(len(shells)):
+            conduct_left  = env_cooling_factor * HEAT_CONDUCT_AIR if i   == len(shells)-1 else HEAT_CONDUCT_METAL
+            conduct_right = env_cooling_factor * HEAT_CONDUCT_AIR if i+1 == len(shells)-1 else HEAT_CONDUCT_METAL
+            delta_left = 0 if i-1 < 0 else shells[i-1] - shells[i]
+            delta_right = 0 if i+1 >= len(shells) else shells[i+1] - shells[i]
+            # these values are >0 if shell[i] is colder than neighbors
+            next_shells[i] = shells[i] + conduct_left*delta_left + conduct_right*delta_right
+
+        print(f"true egress: {self.temp_shells[-2] - next_shells[-2]}")
+        for i in range(len(shells)):
+            self.temp_shells[i] = next_shells[i]
         # the outermost shell is always at ENV_TEMP
-        print(f"true egress: {self.temp_shells[-1] - ENV_TEMP}")
         self.temp_shells[-1] = ENV_TEMP
+
 
     def _pop_disturbance(self):
         mod = 0
