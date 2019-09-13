@@ -1,0 +1,19 @@
+
+# How do we autotune this monster?
+
+* First: measure ENV_TEMP
+
+* thermal mass: heat hotend from ENV_TEMP to 180 degrees, then stop, and see how much it overshoots
+    problem: which parameter to tune with this? number of shells? heat conductivity?
+
+* heater power estimation (bootstrapping?)
+      First, one long burn, find peak, measure angle of climb (heater power)
+      After burn: measure falloff angle
+Suppose heater wattage is known
+* passive Convective cooling:
+      set heater to 30%, wait till it reaches equilibrium. Now, input = convective losses
+* number of shells / metal heat conductivity:
+   heat with a square wave, so the temp graph becomes staircase
+   predict whole graph, scale it so the peaks are aligned
+   choose number of shells for best fit
+How do we calculate thermal egress?

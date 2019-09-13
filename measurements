@@ -21,3 +21,8 @@ took from 16.015 until 46.022 to cool from 127.7°C to 112.3°C
 --> temperature differential: 98.4 °C
 
 ==> cooling about 0.005216°C/s for every degree of temperature differential
+
+= thermal Model as cellular automaton:
+T(t+1) = T(t) + timespan / (heat_capacity[J/(kg*celsius)] * density[kg/m^3]) * \sum{i}{ qi(t) }
+where
+qi(t) = lambda * (Ti-1(t) - Ti(t))/h^2 - lambda * (Ti(t) - Ti+1(t)) / h^2 + heat generated

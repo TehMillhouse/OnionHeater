@@ -6,7 +6,7 @@ TICK_LEN = 0.833
 ENV_TEMP = 21.4
 WINDOW_SIZE = 2  # number of ticks to use for estimation of current thermal egress
 
-HEAT_CONDUCT_METAL = 0.1  # dunno lol, how do I measure this?
+HEAT_CONDUCT_METAL = 0.05  # dunno lol, how do I measure this?
 HEAT_CONDUCT_AIR = 0.0043445  # degree per tick for every degree of temperature differential
 # HEAT_CONDUCT_AIR = 0.4 / 200
 HEATER_POWER = 1.680493278  # degrees per tick :(

@@ -57,6 +57,9 @@ class OnionController(object):
         self.target = target
 
     def extrapolate(self, source_time, target_time, cooling_factor):
+        # shell idxs for readability
+        SENSOR = -2
+        ENV = -1
         # take source_time history item as ground truth, ignore rest of history since
         hist_idx = source_time - self.time
         ground_truth = self.history[hist_idx]
@@ -64,26 +67,31 @@ class OnionController(object):
         # ground the ground truth in... truth? Anyway, scale the model so it confirms to reality
         error = ground_truth.sensor_temp - ground_truth.shells[-2]
         shells = list(ground_truth.shells)
-        shells[-2] = ground_truth.sensor_temp
+        shells[SENSOR] = ground_truth.sensor_temp
         prediction = []
         # todo: cooling factor
         egress = self.estimate_egress(hist_idx)  # extrapolate based on constant egress
-        egress_delta_t = shells[-2] - shells[-1]  # amount of convective cooling is ~linear in temp difference
+        egress_delta_t = shells[SENSOR] - shells[ENV]  # amount of convective cooling is ~linear in temp difference
         for tick in range(target_time - source_time):
             shells[0] += heater_output * self.power
 
-            egress_factor = ((shells[-2] - shells[-1]) / egress_delta_t) if egress_delta_t != 0 else 1
-            shells[-2] -= egress * egress_factor
+            egress_factor = ((shells[SENSOR] - shells[ENV]) / egress_delta_t) if egress_delta_t != 0 else 1
+            shells[SENSOR] -= egress * egress_factor
             for _ in range(self.dissipation_passes):
                 self.dissipate_temps(shells, ground_truth.cooling_factor)
-            heater_avg_temp = sum(shells[:-1]) / (len(shells)-1)
+            heater_avg_temp = sum(shells[:ENV]) / (len(shells)-1)
             # How much should we heat? Since we have a full thermal model, we could just heat just enough
-            # to bringt the average temperature to setpoint. However! Since we're constantly losing heat
-            # through convection, there will always be a temperature gradient in the hotend. Since we
+            # to bring the average temperature to setpoint. However! Since we're constantly losing heat
+            # through convection, there will always be a temperature gradient within the hotend. Since we
             # want *the sensor* to be at setpoint, that won't be enough.
 
-            # TODO: better formula for what exactly we are aiming for...
-            degrees_needed = (self.target + egress * egress_factor + (self.target - shells[-2]) - heater_avg_temp) * len(self.shells)
+            # However, targeting setpoint+(avg - sensor) will be too noisy, since the sensor is noisy.
+            degrees_needed = (self.target - heater_avg_temp  # this much heat is needed on average per shell
+                    + egress * egress_factor  # ... correct for the heat we're about to lose through convection
+                    + (heater_avg_temp - shells[SENSOR])
+                    # a hacky way to account for gradient: + HEAT_CONDUCT_AIR * (self.target - ENV_TEMP) * 40
+                    # a less hacky way to account for it: + (heater_avg_temp - fake_sensor)  # ... and for the internal heat gradient
+                    ) * len(self.shells)
             heater_output = clamp( degrees_needed / self.power, 0.0, 1.0)
             prediction.append(HistItem(source_time+tick+1, None, heater_output, list(shells)))
         return prediction
@@ -120,40 +128,20 @@ class OnionController(object):
         return self.history[0].heater_output
 
     def dissipate_temps(self, shells, env_cooling_factor=1.0):
-        # heat dissipation scales with temperature differential
-        for i in range(len(shells)-1):
-            if shells[i] > shells[i+1]:
-                hi = i
-                lo = i+1
-            else:
-                hi = i+1
-                lo = i
-            temp_diff = shells[hi] - shells[lo]
-            # different heat exchange factors for metal/metal and metal/air
-            if i < len(shells)-2:
-                shells[hi] -= HEAT_CONDUCT_METAL * temp_diff
-                shells[lo] += HEAT_CONDUCT_METAL * temp_diff
-            # TODO: should this be in the model to begin with?
-            #else:
-            #    # heat exchange between metal and cooling air
-            #    shells[hi] -= env_cooling_factor * HEAT_CONDUCT_AIR * temp_diff
-            #    shells[lo] += env_cooling_factor * HEAT_CONDUCT_AIR * temp_diff
+        # heat dissipation as cellular automaton: each shell independently calculates how much
+        # heat it exchanges with its neighbors
+        next_shells = list(shells)
+        for i in range(len(shells)):
+            conduct_left  = env_cooling_factor * HEAT_CONDUCT_AIR if i   == len(shells)-1 else HEAT_CONDUCT_METAL
+            conduct_right = env_cooling_factor * HEAT_CONDUCT_AIR if i+1 == len(shells)-1 else HEAT_CONDUCT_METAL
+            delta_left = 0 if i-1 < 0 else shells[i-1] - shells[i]
+            delta_right = 0 if i+1 >= len(shells) else shells[i+1] - shells[i]
+            # these values are >0 if shell[i] is colder than neighbors
+            next_shells[i] = shells[i] + conduct_left*delta_left + conduct_right*delta_right
+
+        for i in range(len(shells)):
+            shells[i] = next_shells[i]
         # the outermost shell is always at ENV_TEMP
         shells[-1] = ENV_TEMP
 
 
-# Unsolved questions:
-# How do we autotune this monster?
-# Suppose heater wattage is known
-# * First: measure env_temp
-# * passive Convective cooling:
-#       set heater to 30%, wait till it reaches equilibrium. Now, input = convective losses
-# * heater power estimation (bootstrapping?)
-#       First, one long burn, find peak, measure angle of climb (heater power)
-#       After burn: measure falloff angle (air dissipation) (<-- does this need to be temperature delta dependent?)
-# * number of shells / metal heat conductivity:
-#    heat with a square wave, so the temp graph becomes staircase
-#    predict whole graph, scale it so the peaks are aligned
-#    choose number of shells for best fit
-# How do we calculate thermal egress?
-# How do I prevent drift?
