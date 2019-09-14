@@ -7,8 +7,9 @@ from pid import OnionController
 
 
 class Sim(object):
-    def __init__(self, target, shells, power=HEATER_POWER, randomness=NOISE_AMP, dissipation_passes=2):
-        self.controller = OnionController(shells, power, dissipation_passes)
+    def __init__(self, target, metal_shells=6, power=HEATER_POWER, randomness=NOISE_AMP, dissipation_passes=2):
+        shells = metal_shells + 1  # one filled with air
+        self.controller = OnionController(metal_shells, power, dissipation_passes)
         # heater is at first (innermost) shell, sensor at second-to-last shell, outermost shell is outside
         self.temp_shells = [ENV_TEMP] * shells
         self.controller_data = []

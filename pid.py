@@ -38,8 +38,12 @@ class OnionController(object):
     # heater is in innermost shell (0), sensor in outermost metal shell
     # heat gradients are smoothed, w/ different conductivity b/w air & metal
 
-    def __init__(self, shells, power, dissipation_passes=2, history_length=None, initial_temp=ENV_TEMP):
-        self.power = power
+    def __init__(self, metal_shells, power, dissipation_passes=2, history_length=None, initial_temp=ENV_TEMP):
+        shells = metal_shells + 1  # there's an additional outer shell filled with air
+
+        # Since heat conductivity of metal is pretty high, the heater is effectively outputting
+        # the measured degrees per second over *all* shells
+        self.power = metal_shells * power
         # heater is at first (innermost) shell, sensor at second-to-last shell, outermost shell is outside
         self.shells = [initial_temp] * shells
         self.dissipation_passes = dissipation_passes
@@ -59,8 +63,6 @@ class OnionController(object):
         heater_output = ground_truth.heater_output
         # ground the ground truth in... truth? Anyway, scale the model so it confirms to reality
         error = ground_truth.sensor_temp - ground_truth.shells[-2]
-        if abs(error) != 0:
-            print(f"Significant divergence of {error} degrees from model at time {source_time}")
         shells = list(ground_truth.shells)
         shells[-2] = ground_truth.sensor_temp
         prediction = []
