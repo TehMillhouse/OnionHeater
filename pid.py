@@ -65,7 +65,6 @@ class OnionController(object):
         ground_truth = self.history[hist_idx]
         heater_output = ground_truth.heater_output
         # ground the ground truth in... truth? Anyway, scale the model so it confirms to reality
-        error = ground_truth.sensor_temp - ground_truth.shells[-2]
         shells = list(ground_truth.shells)
         shells[SENSOR] = ground_truth.sensor_temp
         prediction = []
@@ -88,7 +87,7 @@ class OnionController(object):
             # However, targeting setpoint+(avg - sensor) will be too noisy, since the sensor is noisy.
             degrees_needed = (self.target - heater_avg_temp  # this much heat is needed on average per shell
                     + egress * egress_factor  # ... correct for the heat we're about to lose through convection
-                    + (heater_avg_temp - shells[SENSOR])
+                    # + (heater_avg_temp - shells[SENSOR])
                     # a hacky way to account for gradient: + HEAT_CONDUCT_AIR * (self.target - ENV_TEMP) * 40
                     # a less hacky way to account for it: + (heater_avg_temp - fake_sensor)  # ... and for the internal heat gradient
                     ) * len(self.shells)
