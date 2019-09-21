@@ -90,7 +90,7 @@ class OnionController(object):
                     # + (heater_avg_temp - shells[SENSOR])
                     # a hacky way to account for gradient: + HEAT_CONDUCT_AIR * (self.target - ENV_TEMP) * 40
                     # a less hacky way to account for it: + (heater_avg_temp - fake_sensor)  # ... and for the internal heat gradient
-                    ) * len(self.shells)
+                    ) * (len(self.shells)-1)
             heater_output = clamp( degrees_needed / self.power, 0.0, 1.0)
             prediction.append(HistItem(source_time+tick+1, None, heater_output, list(shells)))
         return prediction
