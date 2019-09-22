@@ -9,7 +9,6 @@ class HeatController(object):
     def __init__(self, heater, config):
         self.heater = heater
         self.heater_max_power = heater.get_max_power()
-        self.printer = config.get_printer()
         self.config = config
 
         # heater power in degrees per second
@@ -17,11 +16,11 @@ class HeatController(object):
         # number of cells in thermal simulation
         metal_shells = config.getint('model_thermal_mass', 6, minval=2)
         # minimum number of simulation passes per second
-        passes_per_sec = config.getfloat('model_accuracy', 3)
+        passes_per_sec = config.getfloat('model_accuracy', 1)
         # heat dissipation rate within metal
-        thermal_conductivity = config.getfloat('model_thermal_conductivity', 0.05, minval=0, maxval=1)
+        thermal_conductivity = config.getfloat('model_thermal_conductivity', 0.15, minval=0, maxval=1)
         # heat - air dissipation rate
-        base_cooling = config.getfloat('model_air_cooling', 0.0043445, minval=0, maxval=1)
+        base_cooling = config.getfloat('model_air_cooling', 0.00943445, minval=0, maxval=1)
         # additional heat dissipation effected by fan at 100%
         fan_cooling = config.getfloat('model_fan_cooling', base_cooling, minval=0, maxval=(1-base_cooling))
         initial_temp = 21.5
@@ -34,7 +33,7 @@ class HeatController(object):
     def stable_state_gradient(self):
         # TODO: start by initializing the model to 200 degrees, and run it a handfull of seconds
         # always putting back in what is lost through convection
-        return 0
+        return 27
 
     def temperature_update(self, read_time, temp, target_temp):
         self.model.advance_model(read_time, self.current_heater_pwm)
@@ -64,3 +63,7 @@ class HeatController(object):
     def check_busy(self, eventtime, smoothed_temp, target_temp):
         return abs(smoothed_temp - target_temp) < 15
 
+
+class ControlAutoTune(object):
+    def __init__(self, heater, target):
+        pass

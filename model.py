@@ -18,7 +18,7 @@ class Model(object):
         self.shells = [initial_temp] * shells
         # Since heat conductivity of metal is pretty high, the heater is effectively outputting
         # the measured degrees per second over *all* shells
-        self.heater_power = metal_shells * power
+        self.heater_power = metal_shells * heater_power
         # heater is at first (innermost) shell, sensor at second-to-last shell, outermost shell is outside
         self.shells = [initial_temp] * shells
         self.thermal_conductivity = thermal_conductivity
@@ -28,11 +28,21 @@ class Model(object):
         self.base_cooling = base_cooling
         self.fan_cooling = fan_cooling
 
-    def advance_model(self, time, heater_output_until_now, fan_power=0.0):
+    def config(self):
+        return {
+                'heater_power': self.heater_power / (len(self.shells)-1),
+                'metal_shells': len(self.shells)-1,
+                'passes_per_sec': self.passes_per_sec,
+                'thermal_conductivity': self.thermal_conductivity,
+                'base_cooling': self.base_cooling,
+                'fan_cooling': self.fan_cooling
+                }
+
+    def advance_model(self, time, heater_pwm_until_now, fan_power=0.0):
         ðt = time - self.time
-        passes = min(1, math.floor(ðt / self.passes_per_sec))
+        passes = max(1, math.floor(ðt / self.passes_per_sec))
         for _ in range(passes):
-            self.dissipate_temps(ðt / passes, heater_output_until_now, fan_power)
+            self.dissipate_temps(ðt / passes, heater_pwm_until_now, fan_power)
         self.time = time
 
     def adjust_to_measurement(self, sensor_temp):
@@ -46,19 +56,21 @@ class Model(object):
             return self.base_cooling + fan_power * self.fan_cooling
         return self.thermal_conductivity
 
-    def dissipate_temps(self, ðt, heater_output, fan_power=1.0):
+    def dissipate_temps(self, ðt, heater_pwm, fan_power=0.0):
         new_shells = list(self.shells)
-        for target in range(len(self.shells)-1):
+        for target in range(len(self.shells)):
             temp_diff = 0
             for source in [target-1, target+1]:
                 if source < 0 or source >= len(self.shells):
                     continue
                 dist = abs(source - target)
-                gradient_from_source = self.shells[target] - self.shells[source]
+                gradient_from_source = self.shells[source] - self.shells[target]
                 thermal_conductivity = self._thermal_conductivity(source, target, fan_power)
                 temp_diff += thermal_conductivity * gradient_from_source / (dist * dist)
-                if target == 0:
-                    # target shell is heater shell
-                    temp_diff += heater_output
-                new_shells[target] = new_shells[target] + ðt * temp_diff
+            if target == 0:
+                # target shell is heater shell
+                temp_diff += heater_pwm * self.heater_power
+            new_shells[target] = new_shells[target] + ðt * temp_diff
         self.shells = new_shells
+        # the outermost shell is always at ENV_TEMP
+        self.shells[-1] = ENV_TEMP

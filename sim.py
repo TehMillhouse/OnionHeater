@@ -3,24 +3,46 @@ import matplotlib.pyplot as plt
 import random
 import math
 from common import *
-from pid import OnionController
+import controller
 
+class FakeHeater(object):
+
+    def __init__(self):
+        self.pwm = 0
+
+    def get_max_power(self):
+        return 1.0
+
+    def get_pwm(self):
+        return self.pwm
+
+    def set_pwm(self, time, value):
+        self.pwm = value
+
+class FakeConfig(object):
+    def getfloat(self, string, val, **kwargs):
+        return val
+
+    def getint(self, string, val, **kwargs):
+        return val
 
 class Sim(object):
-    def __init__(self, target, metal_shells=6, power=HEATER_POWER, randomness=NOISE_AMP, dissipation_passes=2):
+    def __init__(self, target, metal_shells=5, power=HEATER_POWER, randomness=NOISE_AMP, dissipation_passes=2):
         shells = metal_shells + 1  # one filled with air
-        self.controller = OnionController(metal_shells, power, dissipation_passes)
+        self.target = target
+        self.heater = FakeHeater()
+        self.config = FakeConfig()
+        self.controller = controller.HeatController(self.heater, self.config)
         # heater is at first (innermost) shell, sensor at second-to-last shell, outermost shell is outside
         self.temp_shells = [ENV_TEMP] * shells
         self.controller_data = []
         self.temperature_history = [0.0]
-        for i in range(len(self.controller.shells)):
+        for i in range(len(self.controller.model.shells)):
             self.controller_data.append(list([0.0]))
         self.controller_decisions = [0.0]
         self.modifications_todo = []
         self.randomness = randomness
-
-        self.controller.set_target(target)
+        self.time = 0
 
     def _noise(self):
         return random.random() * self.randomness - 0.5 * self.randomness
@@ -47,8 +69,6 @@ class Sim(object):
         self.modifications_todo += [(in_ticks + i, degrees + self._noise()) for i in range(duration)]
         self.modifications_todo.sort(key=lambda mod: mod[0])
 
-
-
     def dissipate_temps(self, env_cooling_factor=1.0):
         # heat dissipation as cellular automaton: each shell independently calculates how much
         # heat it exchanges with its neighbors
@@ -62,7 +82,6 @@ class Sim(object):
             # these values are >0 if shell[i] is colder than neighbors
             next_shells[i] = shells[i] + conduct_left*delta_left + conduct_right*delta_right
 
-        print(f"true egress: {self.temp_shells[-2] - next_shells[-2]}")
         for i in range(len(shells)):
             self.temp_shells[i] = next_shells[i]
         # the outermost shell is always at ENV_TEMP
@@ -86,14 +105,15 @@ class Sim(object):
         cont = self.controller
         effective_temp = self.sensor_temp() + self._pop_disturbance() + self._noise()
         self.temperature_history.append(effective_temp)
-        cont.record_sample(effective_temp)
-        heater_output = cont.get_decision()
-        self.temp_shells[0] += heater_output * cont.power
+        cont.temperature_update(self.time, effective_temp, self.target)
+        heater_output = self.heater.get_pwm()
+        self.temp_shells[0] += heater_output * cont.heater_output * (len(self.temp_shells)-1)
         self.controller_decisions.append(heater_output)
         self.dissipate_temps()
         self.dissipate_temps()
-        for i in range(len(cont.shells)):
-            self.controller_data[i].append(cont.shells[i])
+        for i in range(len(cont.model.shells)):
+            self.controller_data[i].append(cont.model.shells[i])
+        self.time += TICK_LEN
 
     def ticks(self, n):
         for _ in range(n):
