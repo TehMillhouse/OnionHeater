@@ -65,5 +65,19 @@ class HeatController(object):
 
 
 class ControlAutoTune(object):
+    # Strategy: 
+
     def __init__(self, heater, target):
+        self.heater = heater
+        self.heater_max_power = heater.get_max_power()
+        self.calibrate_temp = target
+
+    def set_pwm(self, read_time, value):
+        if value != self.last_pwm:
+            self.pwm_samples.append(
+                (read_time + self.heater.get_pwm_delay(), value))
+            self.last_pwm = value
+        self.heater.set_pwm(read_time, value)
+
+    def temperature_update(self, read_time, temp, target_temp):
         pass

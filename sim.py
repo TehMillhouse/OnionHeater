@@ -6,7 +6,6 @@ from common import *
 import controller
 
 class FakeHeater(object):
-
     def __init__(self):
         self.pwm = 0
 
