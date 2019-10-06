@@ -11,7 +11,7 @@ HEAT_CONDUCT_AIR = 0.0043445  # degree per tick for every degree of temperature 
 # HEAT_CONDUCT_AIR doesn't seem to behave right...
 
 # HEAT_CONDUCT_AIR = 0.4 / 200
-HEATER_POWER = 1.680493278  # degrees per tick :(
+HEATER_POWER = 2.0166  # degrees celsius / s
 NOISE_AMP = 0.2
 
 

@@ -106,7 +106,7 @@ class Sim(object):
         self.temperature_history.append(effective_temp)
         cont.temperature_update(self.time, effective_temp, self.target)
         heater_output = self.heater.get_pwm()
-        self.temp_shells[0] += heater_output * cont.heater_output * (len(self.temp_shells)-1)
+        self.temp_shells[0] += TICK_LEN * heater_output * cont.heater_output * (len(self.temp_shells)-1)
         self.controller_decisions.append(heater_output)
         self.dissipate_temps()
         self.dissipate_temps()

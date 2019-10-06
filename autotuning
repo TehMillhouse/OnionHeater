@@ -1,4 +1,3 @@
-
 # How do we autotune this monster?
 
 * First: measure ENV_TEMP
@@ -17,3 +16,10 @@ Suppose heater wattage is known
    predict whole graph, scale it so the peaks are aligned
    choose number of shells for best fit
 How do we calculate thermal egress?
+
+Phases during autotuning:
+* heatup: initial heating [env_temp up to target]
+* overshoot [target until peak]
+* cooldown [peak until env_temp + 20 degrees]
+
+plus same thing again with fan turned on.
