@@ -114,7 +114,7 @@ class ControlAutoTune:
         self.heater.set_pwm(read_time, value)
     def temperature_update(self, read_time, temp, target_temp):
         if self.temp_samples:
-            last_temp = self.temp_samples[-1]
+            last_temp = self.temp_samples[-1][1]
         else:
             last_temp = temp
             self.env_temp = temp

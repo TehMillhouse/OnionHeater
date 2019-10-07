@@ -18,7 +18,7 @@ class Model(object):
         self.shells = [initial_temp] * shells
         # Since heat conductivity of metal is pretty high, the heater is effectively outputting
         # the measured degrees per second over *all* shells
-        self.heater_power = metal_shells * heater_power
+        self.heater_power = heater_power # * metal_shells
         # heater is at first (innermost) shell, sensor at second-to-last shell, outermost shell is outside
         self.shells = [initial_temp] * shells
         self.thermal_conductivity = thermal_conductivity
@@ -39,7 +39,7 @@ class Model(object):
                 }
 
     def advance_model(self, ðt, heater_pwm_until_now, fan_power=0.0):
-        passes = max(1, math.floor(ðt / self.passes_per_sec))
+        passes = max(1, math.floor(ðt * self.passes_per_sec))
         for _ in range(passes):
             self.dissipate_temps(ðt / passes, heater_pwm_until_now, fan_power)
         self.time += ðt

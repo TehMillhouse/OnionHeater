@@ -1958,7 +1958,7 @@ pwm: 249.110 0.000
 720.410 42.250
 720.710 42.000
 721.010 41.750
-phase cooldown start: 249.110
+phase cooldown start: 273.710
 phase overshoot start: 248.810
 phase heatup start: 133.910
 phase heatup_fan start: 720.110
