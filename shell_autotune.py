@@ -1,6 +1,7 @@
 # Calibration of model-based controller settings
 
 import math
+import model
 
 class Trace:
     def __init__(self):
@@ -171,6 +172,31 @@ class ControlAutoTune:
 
     def _lerp(self, a, b, alpha):
         return a + alpha * (b - a)
+
+    def _simulate_model(self, model_config, start_idx, end_idx, fan_power):
+        # Creates a model with the given config, and attempts to replicate the temperature
+        # curve between (start_idx, end_idx) in temp_samples
+
+        m = model.Model(**model_config, initial_temp=self.temp_samples[start_idx][1])
+        time = self.temp_samples[start_idx][0]
+        pwm_idx = 0
+        model_temp_samples = [(time, self.temp_samples[start_idx][1])]
+        # pwm_idx is now the index of the last pwm_sample before current time, i.e. the active decision
+        for tick in range(start_idx+1, end_idx+1):
+            # Find the heater output decision that's relevant to know
+            while True:
+                if pwm_idx+1 < len(self.pwm_samples) and self.pwm_samples[pwm_idx+1][0] < time:
+                    pwm_idx += 1
+                else:
+                    break
+
+            time = self.temp_samples[tick][0]
+            ðt = self.temp_samples[tick][0] - self.temp_samples[tick-1][0]
+            new_temp = m.advance_model(ðt, self.pwm_samples[pwm_idx][1], fan_power)
+            model_temp_samples.append((time, new_temp))
+        return (m, model_temp_samples)
+
+
     def calc_params(self):
         #  These are the variables we need to find
         self.env_temp = self.temp_samples[0][1]
@@ -183,10 +209,25 @@ class ControlAutoTune:
         start, end = self._get_index_range('cooldown')
         sample_idx = int(self._lerp(start, end, 0.3))
 
-        return sample_idx
+        DELTA_T = 0.3  # how many seconds back / forward to seek for computing momentary values
+        def derivative(idx):
+            before_idx = idx
+            after_idx = idx
+            while self.temp_samples[idx][0] - self.temp_samples[before_idx][0] < DELTA_T:
+                before_idx -= 1
+            while self.temp_samples[after_idx][0] - self.temp_samples[idx][0] < DELTA_T:
+                after_idx += 1
+            # before_idx and after_idx are now indices at least DELTA_T away from idx time
+            before = self.temp_samples[before]
+            after = self.temp_samples[after]
+            now = self.temp_samples[idx]
 
-    def _middle(self, idx_1, idx_2):
-        return idx_1 + (idx_2 - idx_1)//2
+            deriv_before = (now[1] - before[1]) / (now[0] - before[0])
+            deriv_after = (after[1] - now[1]) / (after[0] - now[0])
+            alpha = (now[0] - before[0]) / (after[0] - before[0])
+
+            return self._lerp(deriv_before, deriv_after, alpha)
+        return sample_idx
 
     def _get_index_range(self, phase):
         start_time = self.phase_start[phase]

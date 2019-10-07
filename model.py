@@ -38,12 +38,12 @@ class Model(object):
                 'fan_cooling': self.fan_cooling
                 }
 
-    def advance_model(self, time, heater_pwm_until_now, fan_power=0.0):
-        ðt = time - self.time
+    def advance_model(self, ðt, heater_pwm_until_now, fan_power=0.0):
         passes = max(1, math.floor(ðt / self.passes_per_sec))
         for _ in range(passes):
             self.dissipate_temps(ðt / passes, heater_pwm_until_now, fan_power)
-        self.time = time
+        self.time += ðt
+        return self.shells[-2]
 
     def adjust_to_measurement(self, sensor_temp):
         predicted_temp = self.shells[-2]

@@ -36,7 +36,7 @@ class HeatController(object):
         return 27
 
     def temperature_update(self, read_time, temp, target_temp):
-        self.model.advance_model(read_time, self.current_heater_pwm)
+        self.model.advance_model(read_time - self.last_read_times[-1], self.current_heater_pwm)
         self.model.adjust_to_measurement(temp)
 
         # TODO: Is this really needed?
