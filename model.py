@@ -2,6 +2,8 @@
 import math
 from common import *
 
+TRACE = True
+
 class Model(object):
     def __init__(self, heater_power, metal_shells=6, passes_per_sec=3, initial_temp=ENV_TEMP, thermal_conductivity=HEAT_CONDUCT_METAL, base_cooling=HEAT_CONDUCT_AIR, fan_cooling=HEAT_CONDUCT_AIR):
         """Create thermal model of hotend.
@@ -27,6 +29,9 @@ class Model(object):
         # FIXME dynamically adjust the effective wind power based on how much heat we're actually losing
         self.base_cooling = base_cooling
         self.fan_cooling = fan_cooling
+        if TRACE:
+            self.history = []
+            self.pwm_history = []
 
     def config(self):
         return {
@@ -43,6 +48,9 @@ class Model(object):
         for _ in range(passes):
             self.dissipate_temps(ðt / passes, heater_pwm_until_now, fan_power)
         self.time += ðt
+        if TRACE:
+            self.history.append(list(self.shells))
+            self.pwm_history.append(heater_pwm_until_now)
         return self.shells[-2]
 
     def adjust_to_measurement(self, sensor_temp):
@@ -55,6 +63,10 @@ class Model(object):
         if source_idx == len(self.shells)-1 or target_idx == len(self.shells)-1:
             return self.base_cooling + fan_power * self.fan_cooling
         return self.thermal_conductivity
+
+    def plot(self):
+        plot(self.history, self.pwm_history)
+
 
     def dissipate_temps(self, ðt, heater_pwm, fan_power=0.0):
         new_shells = list(self.shells)

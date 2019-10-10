@@ -1,4 +1,5 @@
 
+import matplotlib.pyplot as plt
 # I measured these values at home, in my room, on my printer. YMMV
 
 TICK_LEN = 0.833
@@ -18,3 +19,16 @@ NOISE_AMP = 0.2
 def clamp(value, lower, upper):
     return max(lower, min(upper, value))
 
+def plot(trace, pwm_output):
+    # trace = list of tuples, one for each shell
+    shells = len(trace[0])
+    time = [ i * TICK_LEN for i in range(len(trace))]
+    for i in range(shells):
+        if i == shells-2:
+            continue
+        shell = [blip[i] for blip in trace]
+        plt.plot(time, shell, label='c. shell ' + str(i), linestyle='--')
+    plt.plot(time, [blip[-2] for blip in trace], label='Sensor temp')
+    plt.bar(time, [y * 100 for y in pwm_output], color="#aaaaaa20", width=0.25, label='Heater power')
+    plt.legend(loc='upper left')
+    plt.show()
