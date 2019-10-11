@@ -52,6 +52,7 @@ class Trace:
         return a_temp + alpha * (b_temp - a_temp)
 
 
+DELTA_T = 1.3  # how many seconds back / forward to seek for computing momentary values
 
 class ShellCalibrate:
     cmd_MODEL_CALIBRATE_help = "Run calibration for model-based controller"
@@ -196,6 +197,35 @@ class ControlAutoTune:
             model_temp_samples.append((time, new_temp))
         return (m, model_temp_samples)
 
+    def _deriv_at(self, idx):
+        before_idx = idx
+        after_idx = idx
+        global DELTA_T
+        while self.temp_samples[idx][0] - self.temp_samples[before_idx][0] < DELTA_T:
+            before_idx -= 1
+        while self.temp_samples[after_idx][0] - self.temp_samples[idx][0] < DELTA_T:
+            after_idx += 1
+        # before_idx and after_idx are now indices at least DELTA_T away from idx time
+        before = self.temp_samples[before_idx]
+        after = self.temp_samples[after_idx]
+        now = self.temp_samples[idx]
+
+        deriv_before = (now[1] - before[1]) / (now[0] - before[0])
+        deriv_after = (after[1] - now[1]) / (after[0] - now[0])
+        alpha = (now[0] - before[0]) / (after[0] - before[0])
+
+        return self._lerp(deriv_before, deriv_after, alpha)
+
+    def _find_temp(self, temp):
+        start_idx, end_idx = self._get_index_range('cooldown')
+        best = start_idx
+        best_error = 100
+        for idx in range(start_idx, end_idx):
+            error = abs(self.temp_samples[idx][1] - temp)
+            if error < best_error:
+                best = idx
+                best_error = error
+        return best
 
     def calc_params(self):
         #  These are the variables we need to find
@@ -209,27 +239,10 @@ class ControlAutoTune:
         start, end = self._get_index_range('cooldown')
         sample_idx = int(self._lerp(start, end, 0.3))
 
-        DELTA_T = 0.3  # how many seconds back / forward to seek for computing momentary values
-        def derivative(idx):
-            before_idx = idx
-            after_idx = idx
-            while self.temp_samples[idx][0] - self.temp_samples[before_idx][0] < DELTA_T:
-                before_idx -= 1
-            while self.temp_samples[after_idx][0] - self.temp_samples[idx][0] < DELTA_T:
-                after_idx += 1
-            # before_idx and after_idx are now indices at least DELTA_T away from idx time
-            before = self.temp_samples[before]
-            after = self.temp_samples[after]
-            now = self.temp_samples[idx]
-
-            deriv_before = (now[1] - before[1]) / (now[0] - before[0])
-            deriv_after = (after[1] - now[1]) / (after[0] - now[0])
-            alpha = (now[0] - before[0]) / (after[0] - before[0])
-
-            return self._lerp(deriv_before, deriv_after, alpha)
         return sample_idx
 
     def _get_index_range(self, phase):
+        # TODO: make phase_start remember indices, this is stupid
         start_time = self.phase_start[phase]
         end_time = self.phase_start[ self.phases[self.phases.index(phase)+1] ]
         # O(n) search, could be better
@@ -242,6 +255,11 @@ class ControlAutoTune:
                 end_idx = idx
                 return start_idx, end_idx
 
+    def _plot(self):
+        import matplotlib.pyplot as plt
+        plt.plot([i[0] for i in self.temp_samples], [i[1] for i in self.temp_samples], label='Trace temp')
+        plt.legend(loc='upper left')
+        plt.show()
 
 
 def load_config(config):
