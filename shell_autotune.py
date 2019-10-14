@@ -103,9 +103,12 @@ class ControlAutoTune:
         # Sample recording
         self.last_pwm = 0.
         self.pwm_samples = []
+        self.timestamps = []
         self.temp_samples = []
+        self.smoothed_samples = []
         self.phase_start = {}
         self.phase = 'heatup'
+
     # Heater control
     def set_pwm(self, read_time, value):
         if value != self.last_pwm:
@@ -113,13 +116,15 @@ class ControlAutoTune:
                 (read_time + self.heater.get_pwm_delay(), value))
             self.last_pwm = value
         self.heater.set_pwm(read_time, value)
+
     def temperature_update(self, read_time, temp, target_temp):
         if self.temp_samples:
             last_temp = self.temp_samples[-1][1]
         else:
             last_temp = temp
             self.env_temp = temp
-        self.temp_samples.append((read_time, temp))
+        self.timestamps.append(read_time)
+        self.temp_samples.append(temp)
 
         # control code for phases should be listed in reverse order to prevent skipping a phase
         if self.phase == 'heatup_fan':
@@ -141,20 +146,24 @@ class ControlAutoTune:
             self.set_pwm(read_time, 0.)
 
         if self.phase not in self.phase_start:
-            self.phase_start[self.phase] = read_time
+            self.phase_start[self.phase] = len(self.temp_samples)-1
+
     def check_busy(self, eventtime, smoothed_temp, target_temp):
         return not self.phase == 'done'
+
     # Offline analysis helpers
     def write_file(self, filename):
         pwm = ["pwm: %.3f %.3f" % (time, value)
                for time, value in self.pwm_samples]
-        out = ["%.3f %.3f" % (time, temp) for time, temp in self.temp_samples]
+        out = ["%.3f %.3f" % (self.timestamps[idx], self.temp_samples[idx]) for idx in range(len(self.timestamps))]
         phases = ["phase %s start: %.3f" % (p, t) for p, t in self.phase_start.items()]
         f = open(filename, "wb")
         f.write('\n'.join(pwm + out + phases))
         f.close()
+
     def from_file(self, filename='heattest.txt'):
         self.pwm_samples = []
+        self.timestamps = []
         self.temp_samples = []
         self.phase_start = {}
         self.phase = 'done'
@@ -165,11 +174,13 @@ class ControlAutoTune:
                     _, time, val = line.split(' ')
                     self.pwm_samples.append((float(time), float(val)))
                 elif line.startswith('phase '):
-                    _, phase, _, time = line.split(' ')
-                    self.phase_start[phase] = float(time)
+                    _, phase, _, idx = line.split(' ')
+                    self.phase_start[phase] = int(idx)
                 else:
                     time, temp = line.split(' ')
-                    self.temp_samples.append((float(time), float(temp)))
+                    self.timestamps.append(float(time))
+                    self.temp_samples.append(float(temp))
+        self.smoothed_samples = self._smooth(self.temp_samples)
 
     def _lerp(self, a, b, alpha):
         return a + alpha * (b - a)
@@ -178,10 +189,10 @@ class ControlAutoTune:
         # Creates a model with the given config, and attempts to replicate the temperature
         # curve between (start_idx, end_idx) in temp_samples
 
-        m = model.Model(**model_config, initial_temp=self.temp_samples[start_idx][1])
-        time = self.temp_samples[start_idx][0]
+        m = model.Model(**model_config, initial_temp=self.temp_samples[start_idx])
+        time = self.timestamps[start_idx]
         pwm_idx = 0
-        model_temp_samples = [(time, self.temp_samples[start_idx][1])]
+        model_temp_samples = [(time, self.temp_samples[start_idx])]
         # pwm_idx is now the index of the last pwm_sample before current time, i.e. the active decision
         for tick in range(start_idx+1, end_idx+1):
             # Find the heater output decision that's relevant to know
@@ -191,8 +202,8 @@ class ControlAutoTune:
                 else:
                     break
 
-            time = self.temp_samples[tick][0]
-            ðt = self.temp_samples[tick][0] - self.temp_samples[tick-1][0]
+            time = self.timestamps[tick]
+            ðt = self.timestamps[tick] - self.timestamps[tick-1]
             new_temp = m.advance_model(ðt, self.pwm_samples[pwm_idx][1], fan_power)
             model_temp_samples.append((time, new_temp))
         return (m, model_temp_samples)
@@ -201,14 +212,14 @@ class ControlAutoTune:
         before_idx = idx
         after_idx = idx
         global DELTA_T
-        while self.temp_samples[idx][0] - self.temp_samples[before_idx][0] < DELTA_T:
+        while self.timestamps[idx] - self.timestamps[before_idx] < DELTA_T:
             before_idx -= 1
-        while self.temp_samples[after_idx][0] - self.temp_samples[idx][0] < DELTA_T:
+        while self.timestamps[after_idx] - self.timestamps[idx] < DELTA_T:
             after_idx += 1
         # before_idx and after_idx are now indices at least DELTA_T away from idx time
-        before = self.temp_samples[before_idx]
-        after = self.temp_samples[after_idx]
-        now = self.temp_samples[idx]
+        before = (self.timestamps[before_idx], self.temp_samples[before_idx])
+        after = (self.timestamps[after_idx], self.temp_samples[after_idx])
+        now = (self.timestamps[idx], self.temp_samples[idx])
 
         deriv_before = (now[1] - before[1]) / (now[0] - before[0])
         deriv_after = (after[1] - now[1]) / (after[0] - now[0])
@@ -221,7 +232,7 @@ class ControlAutoTune:
         best = start_idx
         best_error = 100
         for idx in range(start_idx, end_idx):
-            error = abs(self.temp_samples[idx][1] - temp)
+            error = abs(self.temp_samples[idx] - temp)
             if error < best_error:
                 best = idx
                 best_error = error
@@ -241,23 +252,25 @@ class ControlAutoTune:
 
         return sample_idx
 
+    def _smooth(self, samples):
+        # The thermistor on my printer has a noise amplitude of about +- 0.4 degrees,
+        # which is higher than some of the derivatives we want to measure, so we'll
+        # need some good smoothing of our data sets
+        from scipy import signal
+        window_length = min(100, max(20, len(samples)//5))
+        if window_length % 2 == 0:
+            window_length += 1
+        return signal.savgol_filter(samples, window_length, 3)
+
     def _get_index_range(self, phase):
-        # TODO: make phase_start remember indices, this is stupid
-        start_time = self.phase_start[phase]
-        end_time = self.phase_start[ self.phases[self.phases.index(phase)+1] ]
-        # O(n) search, could be better
-        start_idx = None
-        end_idx = None
-        for idx, (time, _) in enumerate(self.temp_samples):
-            if start_idx is None and time >= start_time:
-                start_idx = idx
-            if end_idx is None and time >= end_time:
-                end_idx = idx
-                return start_idx, end_idx
+        start_idx = self.phase_start[phase]
+        end_idx = self.phase_start[ self.phases[self.phases.index(phase)+1] ]
+        return start_idx, end_idx
 
     def _plot(self):
         import matplotlib.pyplot as plt
-        plt.plot([i[0] for i in self.temp_samples], [i[1] for i in self.temp_samples], label='Trace temp')
+        plt.plot(self.timestamps, self.temp_samples, label='Trace temp')
+        plt.plot(self.timestamps, self.smoothed_samples, label='smoothed temp')
         plt.legend(loc='upper left')
         plt.show()
 
