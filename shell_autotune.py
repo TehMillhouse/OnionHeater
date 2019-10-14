@@ -3,6 +3,8 @@
 import math
 import model
 
+import matplotlib.pyplot as plt
+
 class Trace:
     def __init__(self):
         self.samples = []
@@ -52,7 +54,10 @@ class Trace:
         return a_temp + alpha * (b_temp - a_temp)
 
 
-DELTA_T = 1.3  # how many seconds back / forward to seek for computing momentary values
+DELTA_T = 0.5  # how many seconds back / forward to seek for computing momentary values
+
+# phase transition temperatures
+COOLDOWN_TARGET_TMP = 40
 
 class ShellCalibrate:
     cmd_MODEL_CALIBRATE_help = "Run calibration for model-based controller"
@@ -104,7 +109,7 @@ class ControlAutoTune:
         self.last_pwm = 0.
         self.pwm_samples = []
         self.timestamps = []
-        self.temp_samples = []
+        self.raw_samples = []
         self.smoothed_samples = []
         self.phase_start = {}
         self.phase = 'heatup'
@@ -118,13 +123,13 @@ class ControlAutoTune:
         self.heater.set_pwm(read_time, value)
 
     def temperature_update(self, read_time, temp, target_temp):
-        if self.temp_samples:
-            last_temp = self.temp_samples[-1][1]
+        if self.raw_samples:
+            last_temp = self.raw_samples[-1]
         else:
             last_temp = temp
             self.env_temp = temp
         self.timestamps.append(read_time)
-        self.temp_samples.append(temp)
+        self.raw_samples.append(temp)
 
         # control code for phases should be listed in reverse order to prevent skipping a phase
         if self.phase == 'heatup_fan':
@@ -138,7 +143,7 @@ class ControlAutoTune:
 
         if self.phase == 'heatup' and temp >= target_temp:
             self.phase = 'overshoot'
-            self.heater.alter_target(self.env_temp + 20)
+            self.heater.alter_target(COOLDOWN_TARGET_TMP)
 
         if self.phase in ['heatup', 'heatup_fan']:
             self.set_pwm(read_time, self.heater_max_power)
@@ -146,7 +151,7 @@ class ControlAutoTune:
             self.set_pwm(read_time, 0.)
 
         if self.phase not in self.phase_start:
-            self.phase_start[self.phase] = len(self.temp_samples)-1
+            self.phase_start[self.phase] = len(self.raw_samples)-1
 
     def check_busy(self, eventtime, smoothed_temp, target_temp):
         return not self.phase == 'done'
@@ -155,7 +160,7 @@ class ControlAutoTune:
     def write_file(self, filename):
         pwm = ["pwm: %.3f %.3f" % (time, value)
                for time, value in self.pwm_samples]
-        out = ["%.3f %.3f" % (self.timestamps[idx], self.temp_samples[idx]) for idx in range(len(self.timestamps))]
+        out = ["%.3f %.3f" % (self.timestamps[idx], self.raw_samples[idx]) for idx in range(len(self.timestamps))]
         phases = ["phase %s start: %.3f" % (p, t) for p, t in self.phase_start.items()]
         f = open(filename, "wb")
         f.write('\n'.join(pwm + out + phases))
@@ -164,7 +169,7 @@ class ControlAutoTune:
     def from_file(self, filename='heattest.txt'):
         self.pwm_samples = []
         self.timestamps = []
-        self.temp_samples = []
+        self.raw_samples = []
         self.phase_start = {}
         self.phase = 'done'
         with open(filename, "rb") as f:
@@ -179,20 +184,20 @@ class ControlAutoTune:
                 else:
                     time, temp = line.split(' ')
                     self.timestamps.append(float(time))
-                    self.temp_samples.append(float(temp))
-        self.smoothed_samples = self._smooth(self.temp_samples)
+                    self.raw_samples.append(float(temp))
+        self.smoothed_samples = self._smooth(self.raw_samples)
 
     def _lerp(self, a, b, alpha):
         return a + alpha * (b - a)
 
-    def _simulate_model(self, model_config, start_idx, end_idx, fan_power):
+    def _simulate_model(self, model_config, start_idx, end_idx, fan_power=0):
         # Creates a model with the given config, and attempts to replicate the temperature
-        # curve between (start_idx, end_idx) in temp_samples
+        # curve between (start_idx, end_idx) in smoothed_samples
 
-        m = model.Model(**model_config, initial_temp=self.temp_samples[start_idx])
+        m = model.Model(**model_config)
         time = self.timestamps[start_idx]
         pwm_idx = 0
-        model_temp_samples = [(time, self.temp_samples[start_idx])]
+        model_temp_samples = [(time, self.smoothed_samples[start_idx])]
         # pwm_idx is now the index of the last pwm_sample before current time, i.e. the active decision
         for tick in range(start_idx+1, end_idx+1):
             # Find the heater output decision that's relevant to know
@@ -217,9 +222,9 @@ class ControlAutoTune:
         while self.timestamps[after_idx] - self.timestamps[idx] < DELTA_T:
             after_idx += 1
         # before_idx and after_idx are now indices at least DELTA_T away from idx time
-        before = (self.timestamps[before_idx], self.temp_samples[before_idx])
-        after = (self.timestamps[after_idx], self.temp_samples[after_idx])
-        now = (self.timestamps[idx], self.temp_samples[idx])
+        before = (self.timestamps[before_idx], self.smoothed_samples[before_idx])
+        after = (self.timestamps[after_idx], self.smoothed_samples[after_idx])
+        now = (self.timestamps[idx], self.smoothed_samples[idx])
 
         deriv_before = (now[1] - before[1]) / (now[0] - before[0])
         deriv_after = (after[1] - now[1]) / (after[0] - now[0])
@@ -227,12 +232,12 @@ class ControlAutoTune:
 
         return self._lerp(deriv_before, deriv_after, alpha)
 
-    def _find_temp(self, temp):
-        start_idx, end_idx = self._get_index_range('cooldown')
+    def _find_temp(self, temp, phase='cooldown'):
+        start_idx, end_idx = self._get_index_range(phase)
         best = start_idx
         best_error = 100
         for idx in range(start_idx, end_idx):
-            error = abs(self.temp_samples[idx] - temp)
+            error = abs(self.smoothed_samples[idx] - temp)
             if error < best_error:
                 best = idx
                 best_error = error
@@ -240,17 +245,68 @@ class ControlAutoTune:
 
     def calc_params(self):
         #  These are the variables we need to find
-        self.env_temp = self.temp_samples[0][1]
+        self.env_temp = self.smoothed_samples[0]
         #  base_cooling_per_deg = None
         #  fan_extra_cooling_per_deg = None
         #  shell_conductivity = None
         #  heater_power = None
+        return self._fit_model('heatup', 'cooldown')
 
-        #sample_idx = self._middle(*self._get_index_range('cooldown'))
-        start, end = self._get_index_range('cooldown')
-        sample_idx = int(self._lerp(start, end, 0.3))
 
-        return sample_idx
+    def _fit_model(self, heat_phase, cooldown_phase):
+        # we'll measure passive convective cooling during the cooldown phase
+        # and compensate our input data for the energy lost.
+        # the resulting temp data should have roughly linear heating
+
+        temp_range = range(self.calibrate_temp, COOLDOWN_TARGET_TMP-1,-1)
+        measured_derivs = [self._deriv_at(self._find_temp(i, phase=cooldown_phase)) for i in temp_range]
+        smoothed_derivs = self._smooth(measured_derivs)
+        # we're messing with temperature *differentials* here
+        temp_range = [t - self.env_temp for t in temp_range]
+
+        # poor man's linear regression: pick 2 points, fit to those
+        x1 = temp_range[10]
+        y1 = smoothed_derivs[10]  # the first few will be skewed due to smoothing...
+        x2 = temp_range[-20]
+        y2 = smoothed_derivs[-20]  # as will the last few. The high end of the temperature scale
+        # also sees less cooling since the data came from a moment when the hotend might not have
+        # thermally equalized yet
+
+        a = (y2-y1)/(x2-x1)
+        b = y1 - (a*x1)
+        # cooling is the function a*(t-env_temp)+b
+
+        start, _ = self._get_index_range(heat_phase)
+        _, end = self._get_index_range(cooldown_phase)
+        compensated_temps = []
+        loss = 0
+        for idx in range(start, end+1):
+            t = self.smoothed_samples[idx]
+            compensated_temps.append(t-loss)
+            ðt = self.timestamps[idx+1] - self.timestamps[idx]
+            loss += ðt * (a*(t - self.env_temp) + b)
+
+        config = {
+            'heater_power': 134,
+            'thermal_conductivity': 0.197,
+            'initial_temp': self.smoothed_samples[start],
+            'env_temp': self.env_temp,
+            'base_cooling': 0.0105,
+#            'base_cooling': 0.0,
+            'fan_cooling': 0.0
+            }
+        # Order of calibration:
+        # heater strength (initial guess, fit to compensated)
+        # thermal mass (fit to compensated)
+        # base_cooling (scale so peaks align vertically)
+        # heater strength (to get scaling factor right)
+        m, model_samples = self._simulate_model(config, start, end, fan_power=0.0)
+        plt.plot(self.timestamps, self.smoothed_samples)
+        plt.plot(self.timestamps[start:end+1], compensated_temps)
+        plt.plot(self.timestamps[start:end+1], [i[1] for i in model_samples])
+        plt.show()
+
+        return a, b
 
     def _smooth(self, samples):
         # The thermistor on my printer has a noise amplitude of about +- 0.4 degrees,
@@ -268,8 +324,7 @@ class ControlAutoTune:
         return start_idx, end_idx
 
     def _plot(self):
-        import matplotlib.pyplot as plt
-        plt.plot(self.timestamps, self.temp_samples, label='Trace temp')
+        plt.plot(self.timestamps, self.raw_samples, label='Trace temp')
         plt.plot(self.timestamps, self.smoothed_samples, label='smoothed temp')
         plt.legend(loc='upper left')
         plt.show()

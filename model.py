@@ -5,7 +5,7 @@ from common import *
 TRACE = True
 
 class Model(object):
-    def __init__(self, heater_power, metal_shells=6, passes_per_sec=3, initial_temp=ENV_TEMP, thermal_conductivity=HEAT_CONDUCT_METAL, base_cooling=HEAT_CONDUCT_AIR, fan_cooling=HEAT_CONDUCT_AIR):
+    def __init__(self, heater_power, metal_shells=6, passes_per_sec=3, initial_temp=ENV_TEMP, thermal_conductivity=HEAT_CONDUCT_METAL, base_cooling=HEAT_CONDUCT_AIR, fan_cooling=HEAT_CONDUCT_AIR, env_temp=ENV_TEMP):
         """Create thermal model of hotend.
 
         heater_power: how many degrees per second the heater can output over the hotend
@@ -29,6 +29,7 @@ class Model(object):
         # FIXME dynamically adjust the effective wind power based on how much heat we're actually losing
         self.base_cooling = base_cooling
         self.fan_cooling = fan_cooling
+        self.env_temp = env_temp
         if TRACE:
             self.history = []
             self.pwm_history = []
@@ -61,6 +62,7 @@ class Model(object):
 
     def _thermal_conductivity(self, source_idx, target_idx, fan_power):
         if source_idx == len(self.shells)-1 or target_idx == len(self.shells)-1:
+            # contact to outside world
             return self.base_cooling + fan_power * self.fan_cooling
         return self.thermal_conductivity
 
@@ -72,7 +74,7 @@ class Model(object):
         new_shells = list(self.shells)
         for target in range(len(self.shells)):
             temp_diff = 0
-            for source in [target-1, target+1]:
+            for source in [target-2, target+1]:
                 if source < 0 or source >= len(self.shells):
                     continue
                 dist = abs(source - target)
@@ -83,6 +85,6 @@ class Model(object):
                 # target shell is heater shell
                 temp_diff += heater_pwm * self.heater_power
             new_shells[target] = new_shells[target] + ðt * temp_diff
+            # the outermost shell is always at environment temp
+            new_shells[-1] = self.env_temp
         self.shells = new_shells
-        # the outermost shell is always at ENV_TEMP
-        self.shells[-1] = ENV_TEMP
