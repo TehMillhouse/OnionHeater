@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import random
 import math
 from common import *
-import controller
+from model_based_controller import ModelBasedController
 
 class FakeHeater(object):
     def __init__(self):
@@ -31,7 +31,7 @@ class Sim(object):
         self.target = target
         self.heater = FakeHeater()
         self.config = FakeConfig()
-        self.controller = controller.HeatController(self.heater, self.config)
+        self.controller = ModelBasedController(self.heater, self.config)
         # heater is at first (innermost) shell, sensor at second-to-last shell, outermost shell is outside
         self.temp_shells = [ENV_TEMP] * shells
         self.controller_data = []

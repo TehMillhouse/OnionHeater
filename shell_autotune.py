@@ -342,15 +342,19 @@ class ControlAutoTune:
         binsearch_param((0,100), 'heater_power', lambda mdl: self.smoothed_samples[fit_start] - mdl[fit_start])
 
         m, model_samples = self._simulate_model(config, start, end, fan_power=0.0)
+        self._plot_candidate(model_samples, start, end)
+
+        return config
+
+    def _plot_candidate(self, samples, _from, to):
         # plt.plot(self.timestamps, self.smoothed_samples, label='measured [smoothed]')
         plt.plot(self.timestamps, self.raw_samples, label='measured [raw]')
-        plt.plot(self.timestamps[start:end+1], model_samples, label='model prediction')
+        plt.plot(self.timestamps[_from:to+1], samples, label='model prediction')
         l = [i for i in range(int(self.pwm_samples[0][0]),int(self.pwm_samples[1][0]))]
         plt.bar(l, [200 for _ in l], color="#aaaaaa40", width=1.0, label='Heater turned on')
         plt.legend(loc='upper left')
         plt.show()
 
-        return config
 
     def _smooth(self, samples):
         # The thermistor on my printer has a noise amplitude of about +- 0.4 degrees,
@@ -377,10 +381,10 @@ class ControlAutoTune:
 def load_config(config):
     return ShellCalibrate(config)
 
-def get():
+def get(filename='heattest_220'):
     class FHeater:
         def get_max_power(self):
             return 1.0
     c = ControlAutoTune(FHeater(), 200)
-    c.from_file()
+    c.from_file(filename)
     return c

@@ -1,7 +1,7 @@
 import model
 from common import *
 
-class HeatController(object):
+class ModelBasedController(object):
     # internally models hotend as made of shells of metal surrounded by air
     # heater is in innermost shell (0), sensor in outermost metal shell
     # heat gradients are smoothed, w/ different conductivity b/w air & metal
