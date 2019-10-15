@@ -309,12 +309,17 @@ class ControlAutoTune:
         fit_start, fit_end = self.phase_start['heatup' + phase_suffix], self.phase_start['overshoot' + phase_suffix]
         fit_pivot = (fit_start + fit_end) // 2
         def thermal_mass_error(mdl):
-            error = 0
-            for i in range(fit_start, fit_pivot):
-                error += mdl[i] - compensated_temps[i]
-            for i in range(fit_pivot, fit_end):
-                error += compensated_temps[i] - mdl[i]
-            return error
+            idx = self._find_temp(mdl[fit_pivot], 'heatup' + phase_suffix)
+            return fit_pivot - idx
+
+        # alternative: sum of errors during heatup, with ramp-up and overshoot being weighted opposite
+        # def thermal_mass_error(mdl):
+        #     error = 0
+        #     for i in range(fit_start, fit_pivot):
+        #         error += mdl[i] - compensated_temps[i]
+        #     for i in range(fit_pivot, fit_end):
+        #         error += compensated_temps[i] - mdl[i]
+        #     return error
         th_conduct = binsearch_param((0,1.0), 'thermal_conductivity', thermal_mass_error)
 
         fit_start, fit_end = self.phase_start['cooldown' + phase_suffix], end
