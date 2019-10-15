@@ -5,53 +5,27 @@ import model
 
 import matplotlib.pyplot as plt
 
-class Trace:
-    def __init__(self):
-        self.samples = []
-        self.phases = {}
+TARGET_IS_HIGHER = object()
+TARGET_IS_LOWER = object()
+EPSILON = 0.0005  # how closely to tune model parameters
 
-    def record_sample(self, time, temp):
-        self.samples.append( (time, temp) )
-
-    def ent_temp(self):
-        return self.samples[0][1]
-
-    def _find_sample(self, phase=None, target_temp=None, target_time=None):
-        if phase is None:
-            lower = 0
-            upper = len(self.samples)-1
-        else:
-            #  TODO phases?
-            pass
-        if not target_temp is None:
-            target = target_temp
-            target_idx = 1
-
-        while upper - lower >= 1:
-            # prevent returning the wrong idx
-            if self.samples[upper][target_idx] <= target:
-                return upper
-            middle = lower + (upper-lower)//2
-            if not target_temp is None:
-                setlower = target_temp > self.samples[middle][1]
-            if setlower:
-                if lower == middle:
-                    # target is between two samples, return lower
-                    return lower
-                lower = middle
-            else:
-                upper = middle
-        return lower
-
-    def temp_at(self, time):
-        # binsearch closest, then lerp
-        lower_idx = self._find_sample(target_temp=time)
-        (a_time, a_temp) = self.samples[lower_idx]
-        if a_time == time or len(self.samples) == lower_idx + 1:
-            return a_temp
-        (b_time, b_temp) = self.samples[lower_idx + 1]
-        alpha = (time - a_time) / (b_time - a_time)
-        return a_temp + alpha * (b_temp - a_temp)
+def bin_search_float(lower, upper):
+    # exponential growth first to find upper bound
+    feedback = yield upper
+    while feedback is TARGET_IS_HIGHER:
+        lower = upper
+        upper *= 2
+        feedback = yield upper
+    while abs(upper - lower) > EPSILON:
+        current = (lower + upper) / 2
+        feedback = yield current
+        assert not feedback is None
+        if feedback is TARGET_IS_HIGHER:
+            lower = current
+            continue
+        if feedback is TARGET_IS_LOWER:
+            upper = current
+            continue
 
 
 DELTA_T = 0.5  # how many seconds back / forward to seek for computing momentary values
@@ -252,11 +226,17 @@ class ControlAutoTune:
         #  heater_power = None
         return self._fit_model('heatup', 'cooldown')
 
+    def _curve_error_squares(self, prediction, truth):
+        error = 0
+        for i in range(len(prediction)):
+            ðy = abs(prediction[i] - truth[i])
+            error += ðy * ðy
+        return error
 
     def _fit_model(self, heat_phase, cooldown_phase):
         # we'll measure passive convective cooling during the cooldown phase
         # and compensate our input data for the energy lost.
-        # the resulting temp data should have roughly linear heating
+        # the resulting temp data allows us to get a good guess at heater power
 
         temp_range = range(self.calibrate_temp, COOLDOWN_TARGET_TMP-1,-1)
         measured_derivs = [self._deriv_at(self._find_temp(i, phase=cooldown_phase)) for i in temp_range]
@@ -286,20 +266,50 @@ class ControlAutoTune:
             ðt = self.timestamps[idx+1] - self.timestamps[idx]
             loss += ðt * (a*(t - self.env_temp) + b)
 
+        # We can finally start calibrating the model.
+        # Order of calibration:
+        #   1. heater strength (initial guess, fit to compensated)
+        #   2. thermal mass (fit to compensated)
+        #   3. base_cooling (scale so peaks align vertically)
+        #   4. heater strength (fit to true data)
+
         config = {
-            'heater_power': 134,
-            'thermal_conductivity': 0.197,
+#            'heater_power': 134,
+#            'thermal_conductivity': 0.192,
             'initial_temp': self.smoothed_samples[start],
             'env_temp': self.env_temp,
-            'base_cooling': 0.0105,
-#            'base_cooling': 0.0,
+#            'base_cooling': 0.0105,
+            'base_cooling': 0.0,
             'fan_cooling': 0.0
             }
-        # Order of calibration:
-        # heater strength (initial guess, fit to compensated)
-        # thermal mass (fit to compensated)
-        # base_cooling (scale so peaks align vertically)
-        # heater strength (to get scaling factor right)
+
+        binsrch = bin_search_float(0,100)
+        heater_power = next(binsrch)
+        try:
+            while True:
+                config['heater_power'] = heater_power
+                m, model_samples = self._simulate_model(config, start, end, fan_power=0.0)
+                # Tune so the equalized temperature fits truth
+                error = compensated_temps[-1] - model_samples[-1][1]
+                if error == 0:
+                    break
+                heater_power = binsrch.send(TARGET_IS_HIGHER if error > 0 else TARGET_IS_LOWER)
+        except StopIteration:
+            pass
+        binsrch = bin_search_float(0,1.0)
+        th_conduct = next(binsrch)
+        try:
+            while True:
+                config['thermal_conductivity'] = th_conduct
+                m, model_samples = self._simulate_model(config, start, end, fan_power=0.0)
+                # TODO TODO
+                # Tune so the equalized temperature fits truth
+                error = compensated_temps[-1] - model_samples[-1][1]
+                if error == 0:
+                    break
+                heater_power = heater_power_search.send(TARGET_IS_HIGHER if error > 0 else TARGET_IS_LOWER)
+        except StopIteration:
+            pass
         m, model_samples = self._simulate_model(config, start, end, fan_power=0.0)
         plt.plot(self.timestamps, self.smoothed_samples)
         plt.plot(self.timestamps[start:end+1], compensated_temps)
