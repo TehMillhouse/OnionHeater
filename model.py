@@ -69,7 +69,6 @@ class Model(object):
     def plot(self):
         plot(self.history, self.pwm_history)
 
-
     def dissipate_temps(self, ðt, heater_pwm, fan_power=0.0):
         new_shells = list(self.shells)
         for target in range(len(self.shells)):
