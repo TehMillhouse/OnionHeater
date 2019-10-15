@@ -73,7 +73,7 @@ class Model(object):
         new_shells = list(self.shells)
         for target in range(len(self.shells)):
             temp_diff = 0
-            for source in [target-2, target+1]:
+            for source in [target-1, target+1]:
                 if source < 0 or source >= len(self.shells):
                     continue
                 dist = abs(source - target)
