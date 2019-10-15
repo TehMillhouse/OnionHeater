@@ -3,7 +3,6 @@
 import math
 import model
 
-import matplotlib.pyplot as plt
 
 TARGET_IS_HIGHER = object()
 TARGET_IS_LOWER = object()
@@ -185,8 +184,8 @@ class ControlAutoTune:
                     break
 
             time = self.timestamps[tick]
-            ðt = self.timestamps[tick] - self.timestamps[tick-1]
-            new_temp = m.advance_model(ðt, self.pwm_samples[pwm_idx][1], fan_power)
+            dt = self.timestamps[tick] - self.timestamps[tick-1]
+            new_temp = m.advance_model(dt, self.pwm_samples[pwm_idx][1], fan_power)
             model_temp_samples.append(new_temp)
         return (m, model_temp_samples)
 
@@ -232,8 +231,8 @@ class ControlAutoTune:
     def _curve_error_squares(self, prediction, truth):
         error = 0
         for i in range(len(prediction)):
-            ðy = abs(prediction[i] - truth[i])
-            error += ðy * ðy
+            dy = abs(prediction[i] - truth[i])
+            error += dy * dy
         return error
 
     def _fit_model(self, phase_suffix=''):
@@ -267,8 +266,8 @@ class ControlAutoTune:
             t = self.smoothed_samples[idx]
             new_temp = max(compensated_temps[-1], t-total_loss)  # preclude occasional modeling errors
             compensated_temps.append(new_temp)
-            ðt = self.timestamps[idx+1] - self.timestamps[idx]
-            loss = ðt * (a*(t - self.env_temp) + b)
+            dt = self.timestamps[idx+1] - self.timestamps[idx]
+            loss = dt * (a*(t - self.env_temp) + b)
             total_loss += loss
 
         # We can finally start calibrating the model.
@@ -348,6 +347,7 @@ class ControlAutoTune:
 
     def _plot_candidate(self, samples, _from, to):
         # plt.plot(self.timestamps, self.smoothed_samples, label='measured [smoothed]')
+        import matplotlib.pyplot as plt
         plt.plot(self.timestamps, self.raw_samples, label='measured [raw]')
         plt.plot(self.timestamps[_from:to+1], samples, label='model prediction')
         l = [i for i in range(int(self.pwm_samples[0][0]),int(self.pwm_samples[1][0]))]
@@ -370,12 +370,6 @@ class ControlAutoTune:
         start_idx = self.phase_start[phase]
         end_idx = self.phase_start[ self.phases[self.phases.index(phase)+1] ]
         return start_idx, end_idx
-
-    def _plot(self):
-        plt.plot(self.timestamps, self.raw_samples, label='Trace temp')
-        plt.plot(self.timestamps, self.smoothed_samples, label='smoothed temp')
-        plt.legend(loc='upper left')
-        plt.show()
 
 
 def load_config(config):

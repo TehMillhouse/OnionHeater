@@ -1,8 +1,9 @@
-
 import math
-from common import *
 
 TRACE = True
+ENV_TEMP=21.4
+HEAT_CONDUCT_METAL=0.05
+HEAT_CONDUCT_AIR=0.0043
 
 class Model(object):
     def __init__(self, heater_power, metal_shells=6, passes_per_sec=3, initial_temp=ENV_TEMP, thermal_conductivity=HEAT_CONDUCT_METAL, base_cooling=HEAT_CONDUCT_AIR, fan_cooling=HEAT_CONDUCT_AIR, env_temp=ENV_TEMP):
@@ -44,11 +45,11 @@ class Model(object):
                 'fan_cooling': self.fan_cooling
                 }
 
-    def advance_model(self, ðt, heater_pwm_until_now, fan_power=0.0):
-        passes = max(1, math.floor(ðt * self.passes_per_sec))
+    def advance_model(self, dt, heater_pwm_until_now, fan_power=0.0):
+        passes = int(max(1, math.floor(dt * self.passes_per_sec)))
         for _ in range(passes):
-            self.dissipate_temps(ðt / passes, heater_pwm_until_now, fan_power)
-        self.time += ðt
+            self.dissipate_temps(dt / passes, heater_pwm_until_now, fan_power)
+        self.time += dt
         if TRACE:
             self.history.append(list(self.shells))
             self.pwm_history.append(heater_pwm_until_now)
@@ -56,8 +57,6 @@ class Model(object):
 
     def adjust_to_measurement(self, sensor_temp):
         predicted_temp = self.shells[-2]
-        if abs(sensor_temp - predicted_temp) > 3.0:
-            print(f"Model misaligned by {predicted_temp - sensor_temp}")
         self.shells[-2] = sensor_temp
 
     def _thermal_conductivity(self, source_idx, target_idx, fan_power):
@@ -69,7 +68,7 @@ class Model(object):
     def plot(self):
         plot(self.history, self.pwm_history)
 
-    def dissipate_temps(self, ðt, heater_pwm, fan_power=0.0):
+    def dissipate_temps(self, dt, heater_pwm, fan_power=0.0):
         new_shells = list(self.shells)
         for target in range(len(self.shells)):
             temp_diff = 0
@@ -83,7 +82,7 @@ class Model(object):
             if target == 0:
                 # target shell is heater shell
                 temp_diff += heater_pwm * self.heater_power
-            new_shells[target] = new_shells[target] + ðt * temp_diff
+            new_shells[target] = new_shells[target] + dt * temp_diff
             # the outermost shell is always at environment temp
             new_shells[-1] = self.env_temp
         self.shells = new_shells

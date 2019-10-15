@@ -1,5 +1,4 @@
 
-import matplotlib.pyplot as plt
 # I measured these values at home, in my room, on my printer. YMMV
 
 TICK_LEN = 0.833
@@ -20,6 +19,7 @@ def clamp(value, lower, upper):
     return max(lower, min(upper, value))
 
 def plot(trace, pwm_output):
+    import matplotlib.pyplot as plt
     # trace = list of tuples, one for each shell
     shells = len(trace[0])
     time = [ i * TICK_LEN for i in range(len(trace))]

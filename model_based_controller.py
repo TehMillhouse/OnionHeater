@@ -1,5 +1,7 @@
 import model
-from common import *
+
+def clamp(value, lower, upper):
+    return max(lower, min(upper, value))
 
 class ModelBasedController(object):
     # internally models hotend as made of shells of metal surrounded by air
@@ -14,16 +16,16 @@ class ModelBasedController(object):
         # heater power in degrees per second
         self.heater_output = config.getfloat('model_heater_power', 1.68, minval=0)
         # number of cells in thermal simulation
-        metal_shells = config.getint('model_thermal_mass', 6, minval=2)
+        metal_shells = config.getint('model_num_cells', 6, minval=2)
         # minimum number of simulation passes per second
-        passes_per_sec = config.getfloat('model_accuracy', 7)
+        passes_per_sec = config.getint('model_min_passes_per_sec', 7)
         # heat dissipation rate within metal
         thermal_conductivity = config.getfloat('model_thermal_conductivity', 0.15, minval=0, maxval=1)
         # heat - air dissipation rate
-        base_cooling = config.getfloat('model_air_cooling', 0.00943445, minval=0, maxval=1)
+        base_cooling = config.getfloat('model_base_cooling', 0.00943445, minval=0, maxval=1)
         # additional heat dissipation effected by fan at 100%
         fan_cooling = config.getfloat('model_fan_cooling', base_cooling, minval=0, maxval=(1-base_cooling))
-        initial_temp = 21.5
+        initial_temp = config.getfloat('model_initial_temp', 21.4, minval=0)
 
         self.model = model.Model(self.heater_output, metal_shells, passes_per_sec, initial_temp, thermal_conductivity, base_cooling, fan_cooling)
         self.current_heater_pwm = 0.0
@@ -56,9 +58,6 @@ class ModelBasedController(object):
         # if the expected tick length is long, we need less heat
         self.current_heater_pwm = clamp(degrees_needed / (self.heater_output * tick_len), 0.0, self.heater_max_power)
         self.heater.set_pwm(read_time, self.current_heater_pwm)
-
-    def clamp(value, lower, upper):
-        return max(lower, min(upper, value))
 
     def check_busy(self, eventtime, smoothed_temp, target_temp):
         return abs(smoothed_temp - target_temp) < 15
