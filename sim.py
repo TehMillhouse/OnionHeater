@@ -17,11 +17,19 @@ class FakeHeater(object):
         self.pwm = value
 
 class FakeConfig(object):
-    def getfloat(self, string, val, **kwargs):
-        return val
+    def __init__(self, model_config):
+        self.cfg = model_config
 
-    def getint(self, string, val, **kwargs):
-        return val
+    def getfloat(self, string, *args, **kwargs):
+        assert string.startswith('model_')
+        string = string[len('model_'):]
+        if string in self.cfg:
+            return self.cfg[string]
+        assert len(args)
+        return args[0]
+
+    def getint(self, string, *args, **kwargs):
+        return self.getfloat(string, *args, **kwargs)
 
 TICK_LEN = 0.833
 ENV_TEMP = 21
@@ -30,12 +38,19 @@ NOISE_AMP = 0.2
 HEAT_CONDUCT_METAL = 0.05
 HEAT_CONDUCT_AIR = 0.004345
 
+DEFAULT_CFG = {
+        'heater_power': HEATER_POWER,
+        'thermal_conductivity': HEAT_CONDUCT_METAL,
+        'base_cooling': HEAT_CONDUCT_AIR,
+        'initial_temp': ENV_TEMP
+        }
+
 class Sim(object):
-    def __init__(self, target, metal_cells=5, power=HEATER_POWER, randomness=NOISE_AMP, dissipation_passes=2):
+    def __init__(self, target, metal_cells=5, power=HEATER_POWER, randomness=NOISE_AMP, dissipation_passes=2, model_cfg=DEFAULT_CFG):
         cells = int(metal_cells + 1)  # one filled with air
         self.target = target
         self.heater = FakeHeater()
-        self.config = FakeConfig()
+        self.config = FakeConfig(model_cfg)
         self.controller = ModelBasedController(self.heater, self.config)
         # heater is at first (innermost) shell, sensor at second-to-last shell, outermost shell is outside
         self.temp_cells = [ENV_TEMP] * cells

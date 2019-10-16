@@ -14,20 +14,22 @@ class ModelBasedController(object):
         self.config = config
 
         # heater power in degrees per second
-        self.heater_output = config.getfloat('model_heater_power', 1.68, minval=0)
+        self.heater_output = config.getfloat('model_heater_power', minval=0)
         # number of cells in thermal simulation
-        metal_cells = config.getint('model_num_cells', 6, minval=2)
+        metal_cells = config.getint('model_metal_cells', 6, minval=2)
         # minimum number of simulation passes per second
-        passes_per_sec = config.getint('model_min_passes_per_sec', 7)
+        passes_per_sec = config.getint('model_passes_per_sec', 3)
         # heat dissipation rate within metal
-        thermal_conductivity = config.getfloat('model_thermal_conductivity', 0.15, minval=0, maxval=1)
+        thermal_conductivity = config.getfloat('model_thermal_conductivity', minval=0, maxval=1)
         # heat - air dissipation rate
-        base_cooling = config.getfloat('model_base_cooling', 0.00943445, minval=0, maxval=1)
+        base_cooling = config.getfloat('model_base_cooling', minval=0, maxval=1)
         # additional heat dissipation effected by fan at 100%
         fan_cooling = config.getfloat('model_fan_cooling', base_cooling, minval=0, maxval=(1-base_cooling))
+        # TODO get rid of initial_temp and env_temp
         initial_temp = config.getfloat('model_initial_temp', 21.4, minval=0)
+        self.internal_gradient = config.getfloat('model_internal_gradient', 0)
 
-        self.model = model.Model(self.heater_output, metal_cells, passes_per_sec, initial_temp, thermal_conductivity, base_cooling, fan_cooling)
+        self.model = model.Model(self.heater_output, initial_temp, thermal_conductivity, base_cooling, fan_cooling, initial_temp, metal_cells, passes_per_sec)
         self.current_heater_pwm = 0.0
         # we keep a tally of how long on avg a control tick lasts
         self.last_read_times = [-4, -3, -2, -1]
@@ -35,7 +37,7 @@ class ModelBasedController(object):
     def stable_state_gradient(self):
         # TODO: start by initializing the model to 200 degrees, and run it a handfull of seconds
         # always putting back in what is lost through convection
-        return 27
+        return self.internal_gradient
 
     def temperature_update(self, read_time, temp, target_temp):
         self.model.advance_model(read_time - self.last_read_times[-1], self.current_heater_pwm)

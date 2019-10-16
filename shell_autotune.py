@@ -220,12 +220,12 @@ class ControlAutoTune:
         return best
 
     def calc_params(self):
-        #  These are the variables we need to find
         self.env_temp = self.smoothed_samples[0]
-        #  base_cooling_per_deg = None
-        #  fan_extra_cooling_per_deg = None
-        #  shell_conductivity = None
-        #  heater_power = None
+
+        # TODO: find out internal gradient of model:
+        # start by initializing the model to 200 degrees, and run it a handfull of seconds
+        # always putting back in what is lost through convection
+
         return self._fit_model()
 
     def _curve_error_squares(self, prediction, truth):
@@ -280,6 +280,7 @@ class ControlAutoTune:
         config = {
 #            'heater_power': 134,
 #            'thermal_conductivity': 0.192,
+            'thermal_conductivity': 0.2,
             'initial_temp': self.smoothed_samples[start],
             'env_temp': self.env_temp,
 #            'base_cooling': 0.0105,
@@ -375,7 +376,7 @@ class ControlAutoTune:
 def load_config(config):
     return ShellCalibrate(config)
 
-def get(filename='heattest_220'):
+def get(filename='sample_trace'):
     class FHeater:
         def get_max_power(self):
             return 1.0
