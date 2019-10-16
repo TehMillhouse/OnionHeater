@@ -4,8 +4,8 @@ import math
 import model
 
 
-TARGET_IS_HIGHER = object()
-TARGET_IS_LOWER = object()
+TARGET_IS_HIGHER = -1
+TARGET_IS_LOWER = 1
 EPSILON = 0.0005  # how closely to tune model parameters
 
 # generator for binary search! initialize with bounds, and give feedback via
@@ -15,10 +15,10 @@ def bin_search_float(lower, upper):
     feedback = yield upper
     while feedback is TARGET_IS_HIGHER:
         lower = upper
-        upper *= 2
+        upper *= 2.0
         feedback = yield upper
     while abs(upper - lower) > EPSILON:
-        current = (lower + upper) / 2
+        current = (lower + upper) / 2.0
         feedback = yield current
         assert not feedback is None
         if feedback is TARGET_IS_HIGHER:
