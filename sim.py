@@ -49,6 +49,7 @@ class Sim(object):
     def __init__(self, target, metal_cells=5, power=HEATER_POWER, randomness=NOISE_AMP, dissipation_passes=2, model_cfg=DEFAULT_CFG):
         cells = int(metal_cells + 1)  # one filled with air
         self.target = target
+        self.power = power
         self.heater = FakeHeater()
         self.config = FakeConfig(model_cfg)
         self.controller = ModelBasedController(self.heater, self.config)
@@ -126,7 +127,7 @@ class Sim(object):
         self.temperature_history.append(effective_temp)
         cont.temperature_update(self.time, effective_temp, self.target)
         heater_output = self.heater.get_pwm()
-        self.temp_cells[0] += TICK_LEN * heater_output * cont.heater_output * (len(self.temp_cells)-1)
+        self.temp_cells[0] += TICK_LEN * heater_output * self.power * (len(self.temp_cells)-1)
         self.controller_decisions.append(heater_output)
         self.dissipate_temps()
         self.dissipate_temps()

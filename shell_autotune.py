@@ -67,12 +67,6 @@ class ShellCalibrate:
 
 class ControlAutoTune:
     # These are the variables we need to find
-    env_temp = None
-    base_cooling_per_deg = None
-    fan_extra_cooling_per_deg = None
-    shell_conductivity = None
-    heater_power = None
-
     # controller phases in order:
     phases = ['heatup', 'overshoot', 'cooldown', 'heatup_fan', 'overshoot_fan', 'cooldown_fan']
 
@@ -221,19 +215,33 @@ class ControlAutoTune:
 
     def calc_params(self):
         self.env_temp = self.smoothed_samples[0]
+        config = self._fit_model()
 
-        # TODO: find out internal gradient of model:
+        m, model_samples = self._simulate_model(config, 0, len(self.raw_samples)-1, fan_power=0.0)
+        self._plot_candidate(model_samples, 0, len(self.raw_samples)-1)
+
         # start by initializing the model to 200 degrees, and run it a handfull of seconds
         # always putting back in what is lost through convection
 
-        return self._fit_model()
+        # now, run the model to find the amplitude of the internal gradient during steady state operation
+        tmp_cnf = config.copy()
+        tmp_cnf['initial_temp'] = self.calibrate_temp
+        tmp_model = model.Model(**tmp_cnf)
+        initial_energy = sum(tmp_model.cells[:-1])
+        # simulate for a total of 0.2s * 500 = 10s
+        for tick in range(500):
+            tmp_model.advance_model(dt=0.2, heater_pwm_until_now=0.0)
+            loss = initial_energy - sum(tmp_model.cells[:-1])
+            tmp_model.cells[0] += loss
+        # The value we actually care about is how much the controller needs to offset its target
+        # this value scales with temperature differential at the hotend
+        config['steadystate_offset'] = (sum(tmp_model.cells[:-1])/(len(tmp_model.cells)-1) - tmp_model.cells[-2]) / (self.calibrate_temp - self.env_temp)
+        tmp_model.plot()
 
-    def _curve_error_squares(self, prediction, truth):
-        error = 0
-        for i in range(len(prediction)):
-            dy = abs(prediction[i] - truth[i])
-            error += dy * dy
-        return error
+        print("# autotuned parameters for model-based controller:")
+        for key, val in config.items():
+            print('model_' + key + ': ' + str(val))
+        return config
 
     def _fit_model(self, phase_suffix=''):
         # we'll measure passive convective cooling during the cooldown phase
@@ -278,12 +286,9 @@ class ControlAutoTune:
         #   4. heater strength (fit to smoothed)
 
         config = {
-#            'heater_power': 134,
-#            'thermal_conductivity': 0.192,
             'thermal_conductivity': 0.2,
             'initial_temp': self.smoothed_samples[start],
             'env_temp': self.env_temp,
-#            'base_cooling': 0.0105,
             'base_cooling': 0.0,
             'fan_cooling': 0.0
             }
@@ -295,7 +300,6 @@ class ControlAutoTune:
                 while True:
                     config[param] = curval
                     m, model_samples = self._simulate_model(config, start, end, fan_power=0.0)
-                    # Tune so the equalized temperature fits truth
                     error = error_fn(model_samples)
                     if error == 0:
                         break
@@ -312,7 +316,7 @@ class ControlAutoTune:
             idx = self._find_temp(mdl[fit_pivot], 'heatup' + phase_suffix)
             return fit_pivot - idx
 
-        # alternative: sum of errors during heatup, with ramp-up and overshoot being weighted opposite
+        # alternative: sum of errors during heatup, with ramp-up and wind-down being weighted opposite
         # def thermal_mass_error(mdl):
         #     error = 0
         #     for i in range(fit_start, fit_pivot):
@@ -340,14 +344,10 @@ class ControlAutoTune:
 
         # we're almost done, do one more round of fitting for heater power to vertically align peaks
         binsearch_param((0,100), 'heater_power', lambda mdl: self.smoothed_samples[fit_start] - mdl[fit_start])
-
-        m, model_samples = self._simulate_model(config, start, end, fan_power=0.0)
-        self._plot_candidate(model_samples, start, end)
-
+        # TODO tune fan_cooling
         return config
 
     def _plot_candidate(self, samples, _from, to):
-        # plt.plot(self.timestamps, self.smoothed_samples, label='measured [smoothed]')
         import matplotlib.pyplot as plt
         plt.plot(self.timestamps, self.raw_samples, label='measured [raw]')
         plt.plot(self.timestamps[_from:to+1], samples, label='model prediction')
@@ -355,7 +355,6 @@ class ControlAutoTune:
         plt.bar(l, [200 for _ in l], color="#aaaaaa40", width=1.0, label='Heater turned on')
         plt.legend(loc='upper left')
         plt.show()
-
 
     def _smooth(self, samples):
         # The thermistor on my printer has a noise amplitude of about +- 0.4 degrees,

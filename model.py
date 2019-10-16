@@ -54,6 +54,8 @@ class Model(object):
 
     def adjust_to_measurement(self, sensor_temp):
         predicted_temp = self.cells[-2]
+        if sensor_temp < self.env_temp:
+            self.env_temp = sensor_temp
         self.cells[-2] = sensor_temp
 
     def _thermal_conductivity(self, source_idx, target_idx, fan_power):
@@ -63,7 +65,22 @@ class Model(object):
         return self.thermal_conductivity
 
     def plot(self):
-        plot(self.history, self.pwm_history)
+        self._plot(self.history, self.pwm_history)
+
+    def _plot(self, trace, pwm_output):
+        import matplotlib.pyplot as plt
+        # trace = list of tuples, one for each shell
+        shells = len(trace[0])
+        time = [ i * 0.833 for i in range(len(trace))]
+        for i in range(shells):
+            if i == shells-2:
+                continue
+            shell = [blip[i] for blip in trace]
+            plt.plot(time, shell, label='c. shell ' + str(i), linestyle='--')
+        plt.plot(time, [blip[-2] for blip in trace], label='Sensor temp')
+        plt.bar(time, [y * 100 for y in pwm_output], color="#aaaaaa20", width=0.25, label='Heater power')
+        plt.legend(loc='upper left')
+        plt.show()
 
     def dissipate_temps(self, dt, heater_pwm, fan_power=0.0):
         new_cells = list(self.cells)
