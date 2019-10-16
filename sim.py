@@ -1,8 +1,6 @@
 
-import matplotlib.pyplot as plt
 import random
 import math
-from common import *
 from model_based_controller import ModelBasedController
 
 class FakeHeater(object):
@@ -25,18 +23,25 @@ class FakeConfig(object):
     def getint(self, string, val, **kwargs):
         return val
 
+TICK_LEN = 0.833
+ENV_TEMP = 21
+HEATER_POWER = 2.0166
+NOISE_AMP = 0.2
+HEAT_CONDUCT_METAL = 0.05
+HEAT_CONDUCT_AIR = 0.004345
+
 class Sim(object):
-    def __init__(self, target, metal_shells=5, power=HEATER_POWER, randomness=NOISE_AMP, dissipation_passes=2):
-        shells = metal_shells + 1  # one filled with air
+    def __init__(self, target, metal_cells=5, power=HEATER_POWER, randomness=NOISE_AMP, dissipation_passes=2):
+        cells = int(metal_cells + 1)  # one filled with air
         self.target = target
         self.heater = FakeHeater()
         self.config = FakeConfig()
         self.controller = ModelBasedController(self.heater, self.config)
         # heater is at first (innermost) shell, sensor at second-to-last shell, outermost shell is outside
-        self.temp_shells = [ENV_TEMP] * shells
+        self.temp_cells = [ENV_TEMP] * cells
         self.controller_data = []
         self.temperature_history = [0.0]
-        for i in range(len(self.controller.model.shells)):
+        for i in range(len(self.controller.model.cells)):
             self.controller_data.append(list([0.0]))
         self.controller_decisions = [0.0]
         self.modifications_todo = []
@@ -71,20 +76,20 @@ class Sim(object):
     def dissipate_temps(self, env_cooling_factor=1.0):
         # heat dissipation as cellular automaton: each shell independently calculates how much
         # heat it exchanges with its neighbors
-        shells = self.temp_shells
-        next_shells = list(self.temp_shells)
-        for i in range(len(shells)):
-            conduct_left  = env_cooling_factor * HEAT_CONDUCT_AIR if i   == len(shells)-1 else HEAT_CONDUCT_METAL
-            conduct_right = env_cooling_factor * HEAT_CONDUCT_AIR if i+1 == len(shells)-1 else HEAT_CONDUCT_METAL
-            delta_left = 0 if i-1 < 0 else shells[i-1] - shells[i]
-            delta_right = 0 if i+1 >= len(shells) else shells[i+1] - shells[i]
+        cells = self.temp_cells
+        next_cells = list(self.temp_cells)
+        for i in range(len(cells)):
+            conduct_left  = env_cooling_factor * HEAT_CONDUCT_AIR if i   == len(cells)-1 else HEAT_CONDUCT_METAL
+            conduct_right = env_cooling_factor * HEAT_CONDUCT_AIR if i+1 == len(cells)-1 else HEAT_CONDUCT_METAL
+            delta_left = 0 if i-1 < 0 else cells[i-1] - cells[i]
+            delta_right = 0 if i+1 >= len(cells) else cells[i+1] - cells[i]
             # these values are >0 if shell[i] is colder than neighbors
-            next_shells[i] = shells[i] + conduct_left*delta_left + conduct_right*delta_right
+            next_cells[i] = cells[i] + conduct_left*delta_left + conduct_right*delta_right
 
-        for i in range(len(shells)):
-            self.temp_shells[i] = next_shells[i]
+        for i in range(len(cells)):
+            self.temp_cells[i] = next_cells[i]
         # the outermost shell is always at ENV_TEMP
-        self.temp_shells[-1] = ENV_TEMP
+        self.temp_cells[-1] = ENV_TEMP
 
 
     def _pop_disturbance(self):
@@ -106,12 +111,12 @@ class Sim(object):
         self.temperature_history.append(effective_temp)
         cont.temperature_update(self.time, effective_temp, self.target)
         heater_output = self.heater.get_pwm()
-        self.temp_shells[0] += TICK_LEN * heater_output * cont.heater_output * (len(self.temp_shells)-1)
+        self.temp_cells[0] += TICK_LEN * heater_output * cont.heater_output * (len(self.temp_cells)-1)
         self.controller_decisions.append(heater_output)
         self.dissipate_temps()
         self.dissipate_temps()
-        for i in range(len(cont.model.shells)):
-            self.controller_data[i].append(cont.model.shells[i])
+        for i in range(len(cont.model.cells)):
+            self.controller_data[i].append(cont.model.cells[i])
         self.time += TICK_LEN
 
     def ticks(self, n):
@@ -119,6 +124,7 @@ class Sim(object):
             self.tick()
 
     def plot(self):
+        import matplotlib.pyplot as plt
         time = [ i * TICK_LEN for i in range(len(self.controller_data[0]))]
         for i, shell in enumerate(self.controller_data):
             plt.plot(time, shell, label='c. shell ' + str(i), linestyle='--')
@@ -128,4 +134,4 @@ class Sim(object):
         plt.show()
 
     def sensor_temp(self):
-        return self.temp_shells[-2]
+        return self.temp_cells[-2]

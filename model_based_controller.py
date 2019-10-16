@@ -4,7 +4,7 @@ def clamp(value, lower, upper):
     return max(lower, min(upper, value))
 
 class ModelBasedController(object):
-    # internally models hotend as made of shells of metal surrounded by air
+    # internally models hotend as made of cells of metal surrounded by air
     # heater is in innermost shell (0), sensor in outermost metal shell
     # heat gradients are smoothed, w/ different conductivity b/w air & metal
 
@@ -16,7 +16,7 @@ class ModelBasedController(object):
         # heater power in degrees per second
         self.heater_output = config.getfloat('model_heater_power', 1.68, minval=0)
         # number of cells in thermal simulation
-        metal_shells = config.getint('model_num_cells', 6, minval=2)
+        metal_cells = config.getint('model_num_cells', 6, minval=2)
         # minimum number of simulation passes per second
         passes_per_sec = config.getint('model_min_passes_per_sec', 7)
         # heat dissipation rate within metal
@@ -27,7 +27,7 @@ class ModelBasedController(object):
         fan_cooling = config.getfloat('model_fan_cooling', base_cooling, minval=0, maxval=(1-base_cooling))
         initial_temp = config.getfloat('model_initial_temp', 21.4, minval=0)
 
-        self.model = model.Model(self.heater_output, metal_shells, passes_per_sec, initial_temp, thermal_conductivity, base_cooling, fan_cooling)
+        self.model = model.Model(self.heater_output, metal_cells, passes_per_sec, initial_temp, thermal_conductivity, base_cooling, fan_cooling)
         self.current_heater_pwm = 0.0
         # we keep a tally of how long on avg a control tick lasts
         self.last_read_times = [-4, -3, -2, -1]
@@ -49,12 +49,12 @@ class ModelBasedController(object):
 
         # now calculate how much heat we still need to dump into the hotend
         # TODO also add expected thermal egress
-        model_avg_temp = sum(self.model.shells[:-1]) / (len(self.model.shells)-1)
+        model_avg_temp = sum(self.model.cells[:-1]) / (len(self.model.cells)-1)
         degrees_needed = (target_temp - model_avg_temp \
                 # since we're constantly losing heat, there is always an internal gradient in the hotend.
                 # if we don't compensate for this, we'll have a steady state error
                 + self.stable_state_gradient() / 2  \
-                ) * (len(self.model.shells)-1)
+                ) * (len(self.model.cells)-1)
         # if the expected tick length is long, we need less heat
         self.current_heater_pwm = clamp(degrees_needed / (self.heater_output * tick_len), 0.0, self.heater_max_power)
         self.heater.set_pwm(read_time, self.current_heater_pwm)
