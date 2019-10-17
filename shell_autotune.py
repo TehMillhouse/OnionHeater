@@ -140,7 +140,7 @@ class ControlAutoTune:
         pwm = ["pwm: %.3f %.3f" % (time, value)
                for time, value in self.pwm_samples]
         out = ["%.3f %.3f" % (self.timestamps[idx], self.raw_samples[idx]) for idx in range(len(self.timestamps))]
-        phases = ["phase %s start: %.3f" % (p, t) for p, t in self.phase_start.items()]
+        phases = ["phase %s start: %d" % (p, t) for p, t in self.phase_start.items()]
         f = open(filename, "wb")
         f.write('\n'.join(pwm + out + phases))
         f.close()
