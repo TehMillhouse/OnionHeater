@@ -1,6 +1,6 @@
 # Calibration of model-based controller settings
 
-import math
+import math, logging
 import model
 
 
@@ -64,11 +64,21 @@ class ShellCalibrate:
         heater.set_control(old_control)
         if write_file:
             calibrate.write_file('/tmp/heattest.txt')
+        config = calibrate.calc_params()
+
+        logging.info("Autotune: model config: " + str(config))
+        self.gcode.respond_info("Model parameters:\n"
+                + "\n".join(['model_' + setting + ": " + str(val) for setting, val in config.items()]))
+        # Store results for SAVE_CONFIG
+        configfile = self.printer.lookup_object('configfile')
+        for key, val in config.items():
+            setting = 'model_' + key
+            configfile.set(heater_name, setting, str(val))
 
 class ControlAutoTune:
     # These are the variables we need to find
     # controller phases in order:
-    phases = ['heatup', 'overshoot', 'cooldown', 'heatup_fan', 'overshoot_fan', 'cooldown_fan']
+    phases = ['heatup', 'overshoot', 'cooldown', 'heatup_fan', 'overshoot_fan', 'cooldown_fan', 'done']
 
     def __init__(self, heater, target):
         self.heater = heater
@@ -159,7 +169,7 @@ class ControlAutoTune:
     def _lerp(self, a, b, alpha):
         return a + alpha * (b - a)
 
-    def _simulate_model(self, model_config, start_idx, end_idx, fan_power=0):
+    def _replicate_curve(self, model_config, start_idx, end_idx, fan_power=0):
         # Creates a model with the given config, and attempts to replicate the temperature
         # curve between (start_idx, end_idx) in smoothed_samples
         # pads the resulting list with start_idx many None values to make index calculation easier
@@ -187,9 +197,9 @@ class ControlAutoTune:
         before_idx = idx
         after_idx = idx
         global DELTA_T
-        while self.timestamps[idx] - self.timestamps[before_idx] < DELTA_T:
+        while before_idx > 0 and self.timestamps[idx] - self.timestamps[before_idx] < DELTA_T:
             before_idx -= 1
-        while self.timestamps[after_idx] - self.timestamps[idx] < DELTA_T:
+        while after_idx < len(self.timestamps)-1 and self.timestamps[after_idx] - self.timestamps[idx] < DELTA_T:
             after_idx += 1
         # before_idx and after_idx are now indices at least DELTA_T away from idx time
         before = (self.timestamps[before_idx], self.smoothed_samples[before_idx])
@@ -217,7 +227,7 @@ class ControlAutoTune:
         self.env_temp = self.smoothed_samples[0]
         config = self._fit_model()
 
-        m, model_samples = self._simulate_model(config, 0, len(self.raw_samples)-1, fan_power=0.0)
+        m, model_samples = self._replicate_curve(config, 0, len(self.raw_samples)-1, fan_power=0.0)
         self._plot_candidate(model_samples, 0, len(self.raw_samples)-1)
 
         # start by initializing the model to 200 degrees, and run it a handfull of seconds
@@ -236,11 +246,6 @@ class ControlAutoTune:
         # The value we actually care about is how much the controller needs to offset its target
         # this value scales with temperature differential at the hotend
         config['steadystate_offset'] = (self.calibrate_temp - tmp_model.cells[-2]) / (self.calibrate_temp - self.env_temp)
-        tmp_model.plot()
-
-        print("# autotuned parameters for model-based controller:")
-        for key, val in config.items():
-            print('model_' + key + ': ' + str(val))
         return config
 
     def _fit_model(self, phase_suffix=''):
@@ -299,7 +304,7 @@ class ControlAutoTune:
             try:
                 while True:
                     config[param] = curval
-                    m, model_samples = self._simulate_model(config, start, end, fan_power=0.0)
+                    m, model_samples = self._replicate_curve(config, start, end, fan_power=0.0)
                     error = error_fn(model_samples)
                     if error == 0:
                         break
