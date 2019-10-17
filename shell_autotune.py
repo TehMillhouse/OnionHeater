@@ -235,7 +235,7 @@ class ControlAutoTune:
             tmp_model.cells[0] += loss
         # The value we actually care about is how much the controller needs to offset its target
         # this value scales with temperature differential at the hotend
-        config['steadystate_offset'] = (sum(tmp_model.cells[:-1])/(len(tmp_model.cells)-1) - tmp_model.cells[-2]) / (self.calibrate_temp - self.env_temp)
+        config['steadystate_offset'] = (self.calibrate_temp - tmp_model.cells[-2]) / (self.calibrate_temp - self.env_temp)
         tmp_model.plot()
 
         print("# autotuned parameters for model-based controller:")

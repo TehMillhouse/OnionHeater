@@ -151,3 +151,37 @@ class Sim(object):
 
     def sensor_temp(self):
         return self.temp_cells[-2]
+
+class NullSim(Sim):
+    def __init__(self, target, config=DEFAULT_CFG, randomness=NOISE_AMP):
+        self.target = target
+        self.config = config
+        self.heater = FakeHeater()
+        self.config = FakeConfig(config)
+        self.controller = ModelBasedController(self.heater, self.config)
+        self.controller_data = []
+        self.temperature_history = [0.0]
+        for i in range(len(self.controller.model.cells)):
+            self.controller_data.append(list([0.0]))
+        self.controller_decisions = [0.0]
+        self.modifications_todo = []
+        self.randomness = randomness
+        self.time = 0
+
+    def sensor_temp(self):
+        c = self.controller.model.cells
+        return c[-2] # - (c[-4] - c[-3])
+
+    def tick(self):
+        cont = self.controller
+        effective_temp = self.sensor_temp() + self._pop_disturbance() + self._noise()
+        self.temperature_history.append(effective_temp)
+        prev_en = sum(cont.model.cells[:-1])
+        cont.temperature_update(self.time, effective_temp, self.target)
+        new_en = sum(cont.model.cells[:-1])
+        # print(prev_en - new_en)# - TICK_LEN * cont.current_heater_pwm * cont.model.heater_power)
+        heater_output = self.heater.get_pwm()
+        self.controller_decisions.append(heater_output)
+        for i in range(len(cont.model.cells)):
+            self.controller_data[i].append(cont.model.cells[i])
+        self.time += TICK_LEN

@@ -34,8 +34,17 @@ class ModelBasedController(object):
         # we keep a tally of how long on avg a control tick lasts
         self.last_read_times = [-4, -3, -2, -1]
 
-    def stable_state_offset(self, temp_differential):
-        return self.internal_gradient * temp_differential
+    def stable_state_offset(self, target_temp):
+        # internal gradients require us to target a higher temperature, which in turn
+        # increases the internal gradient! Since the internal gradients in an autotuned
+        # model can get quite big, we need to solve this correctly.
+
+        # we have
+        #     orig_trg = new_trg - (new_trg - env_temp) * internal_gradient
+        # <=> new_trg = orig_trg - (env_temp * internal_gradient) / (1 - internal_gradient)
+        # Solving for new_trg and subtracting the old target temp yields
+        return (target_temp - self.model.env_temp * self.internal_gradient) / (1 - self.internal_gradient) - target_temp
+
 
     def temperature_update(self, read_time, temp, target_temp):
         self.model.advance_model(read_time - self.last_read_times[-1], self.current_heater_pwm)
@@ -52,7 +61,7 @@ class ModelBasedController(object):
         degrees_needed = (target_temp - model_avg_temp \
                 # since we're constantly losing heat, there is always an internal gradient in the hotend.
                 # if we don't compensate for this, we'll have a steady state error
-                + self.stable_state_offset(target_temp - self.model.env_temp)  \
+                + self.stable_state_offset(target_temp)  \
                 ) * (len(self.model.cells)-1)
         # if the expected tick length is long, we need less heat
         self.current_heater_pwm = clamp(degrees_needed / (self.heater_output * tick_len), 0.0, self.heater_max_power)
