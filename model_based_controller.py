@@ -12,6 +12,7 @@ class ModelBasedController(object):
         self.heater = heater
         self.heater_max_power = heater.get_max_power()
         self.config = config
+        self.fan = config.get_printer().lookup_object('fan')
 
         # heater power in degrees per second
         self.heater_output = config.getfloat('model_heater_power', minval=0)
@@ -27,9 +28,10 @@ class ModelBasedController(object):
         fan_cooling = config.getfloat('model_fan_cooling', base_cooling, minval=0, maxval=(1-base_cooling))
         # TODO get rid of initial_temp and env_temp
         initial_temp = config.getfloat('model_initial_temp', 21.4, minval=0)
+        env_temp = config.getfloat('model_env_temp', 21.4, minval=0)
         self.internal_gradient = config.getfloat('model_steadystate_offset', 0)
 
-        self.model = model.Model(self.heater_output, initial_temp, thermal_conductivity, base_cooling, fan_cooling, initial_temp, metal_cells, passes_per_sec)
+        self.model = model.Model(self.heater_output, initial_temp, thermal_conductivity, base_cooling, fan_cooling, env_temp, metal_cells, passes_per_sec)
         self.current_heater_pwm = 0.0
         # we keep a tally of how long on avg a control tick lasts
         self.last_read_times = [-4, -3, -2, -1]
@@ -47,7 +49,8 @@ class ModelBasedController(object):
 
 
     def temperature_update(self, read_time, temp, target_temp):
-        self.model.advance_model(read_time - self.last_read_times[-1], self.current_heater_pwm)
+        fan_power = self.fan.get_status(None)['speed']
+        self.model.advance_model(read_time - self.last_read_times[-1], self.current_heater_pwm, fan_power)
         self.model.adjust_to_measurement(temp)
 
         # TODO: Is this really needed?
