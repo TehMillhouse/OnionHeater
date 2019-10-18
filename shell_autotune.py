@@ -227,8 +227,8 @@ class ControlAutoTune:
         self.env_temp = self.smoothed_samples[0]
         config = self._fit_model()
 
-        m, model_samples = self._replicate_curve(config, 0, len(self.raw_samples)-1, fan_power=0.0)
-        self._plot_candidate(model_samples, 0, len(self.raw_samples)-1)
+        # m, model_samples = self._replicate_curve(config, 0, len(self.raw_samples)-1, fan_power=0.0)
+        # self._plot_candidate(model_samples, 0, len(self.raw_samples)-1)
 
         # start by initializing the model to 200 degrees, and run it a handfull of seconds
         # always putting back in what is lost through convection

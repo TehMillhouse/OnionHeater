@@ -71,6 +71,6 @@ class ModelBasedController(object):
         self.heater.set_pwm(read_time, self.current_heater_pwm)
 
     def check_busy(self, eventtime, smoothed_temp, target_temp):
-        return abs(smoothed_temp - target_temp) < 15
+        return abs(smoothed_temp - target_temp) > 7
 
 
