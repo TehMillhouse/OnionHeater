@@ -31,9 +31,6 @@ def bin_search_float(lower, upper):
 
 DELTA_T = 0.5  # how many seconds back / forward to seek for computing momentary values
 
-# phase transition temperatures
-COOLDOWN_TARGET_TMP = 40
-
 class ShellCalibrate:
     cmd_MODEL_CALIBRATE_help = "Run calibration for model-based controller"
     def __init__(self, config):
@@ -98,6 +95,7 @@ class ControlAutoTune:
         self.smoothed_samples = []
         self.phase_start = {}
         self.phase = 'heatup'
+        self.fan_phase = False
 
     # Heater control
     def set_pwm(self, read_time, value):
@@ -115,22 +113,26 @@ class ControlAutoTune:
             self.env_temp = temp
         self.timestamps.append(read_time)
         self.raw_samples.append(temp)
+        suffix = '_fan' if self.fan_phase else ''
 
         # control code for phases should be listed in reverse order to prevent skipping a phase
-        if self.phase == 'heatup_fan':
+        if self.phase == 'cooldown_fan' and temp < target_temp:
+            self.heater.alter_target(0.0)
+            # accessing the gcode object through this ref and then calling an internal method feels very hacky :\
+            self.heater.gcode._set_fan_speed(0.0)
             self.phase = 'done'
-        if self.phase == 'cooldown' and temp < target_temp:
-            self.heater.alter_target(0)
+        elif self.phase == 'cooldown' and temp < target_temp:
+            self.heater.alter_target(self.calibrate_temp)
+            self.heater.gcode._set_fan_speed(1.0)
             self.phase = 'heatup_fan'
+            self.fan_phase = True
+        elif self.phase.startswith('overshoot') and temp < last_temp:
+            self.phase = 'cooldown' + suffix
+        elif self.phase.startswith('heatup') and temp >= target_temp:
+            self.phase = 'overshoot' + suffix
+            self.heater.alter_target(self._cooldown_target())
 
-        if self.phase == 'overshoot' and temp < last_temp:
-            self.phase = 'cooldown'
-
-        if self.phase == 'heatup' and temp >= target_temp:
-            self.phase = 'overshoot'
-            self.heater.alter_target(COOLDOWN_TARGET_TMP)
-
-        if self.phase in ['heatup', 'heatup_fan']:
+        if self.phase.startswith('heatup'):
             self.set_pwm(read_time, self.heater_max_power)
         else:
             self.set_pwm(read_time, 0.)
@@ -233,13 +235,8 @@ class ControlAutoTune:
         self.env_temp = self.smoothed_samples[0]
         config = self._fit_model()
 
-        # m, model_samples = self._replicate_curve(config, 0, len(self.raw_samples)-1, fan_power=0.0)
-        # self._plot_candidate(model_samples, 0, len(self.raw_samples)-1)
-
         # start by initializing the model to 200 degrees, and run it a handfull of seconds
         # always putting back in what is lost through convection
-
-        # now, run the model to find the amplitude of the internal gradient during steady state operation
         tmp_cnf = config.copy()
         tmp_cnf['initial_temp'] = self.calibrate_temp
         tmp_model = model.Model(**tmp_cnf)
@@ -254,13 +251,12 @@ class ControlAutoTune:
         config['steadystate_offset'] = (self.calibrate_temp - tmp_model.cells[-2]) / (self.calibrate_temp - self.env_temp)
         return config
 
-    def _fit_model(self, phase_suffix=''):
-        # we'll measure passive convective cooling during the cooldown phase
-        # and compensate our input data for the energy lost.
-        # the resulting temp data allows us to get a good guess at heater power
+    def _cooldown_target(self):
+        return int(self.env_temp + 15)
 
-        temp_range = range(self.calibrate_temp, COOLDOWN_TARGET_TMP-1,-1)
-        measured_derivs = [self._deriv_at(self._find_temp(i, phase='cooldown' + phase_suffix)) for i in temp_range]
+    def _cooling_curve(self, phase):
+        temp_range = range(self.calibrate_temp, self._cooldown_target()-1,-1)
+        measured_derivs = [self._deriv_at(self._find_temp(i, phase)) for i in temp_range]
         smoothed_derivs = self._smooth(measured_derivs)
         # we're messing with temperature *differentials* here
         temp_range = [t - self.env_temp for t in temp_range]
@@ -276,12 +272,27 @@ class ControlAutoTune:
         a = (y2-y1)/(x2-x1)
         b = y1 - (a*x1)
         # cooling is the function a*(t-env_temp)+b
+        return a, b
 
-        start, _ = self._get_index_range('heatup' + phase_suffix)
-        _, end = self._get_index_range('cooldown' + phase_suffix)
+    def _fit_model(self):
+        # Order of calibration:
+        #   1. heater strength (initial guess, fit to compensated)
+        #   2. thermal mass (fit to compensated)
+        #   3. base_cooling (fit to smoothed)
+        #   4. heater strength (fit to smoothed)
+
+        heat_start, heat_stop = self._get_index_range('heatup')
+        cool_start, cool_end = self._get_index_range('cooldown')
+        heat_fan_start, heat_fan_stop = self._get_index_range('heatup_fan')
+        cool_fan_start, cool_fan_end = self._get_index_range('cooldown_fan')
+
+        # we'll measure passive convective cooling during the cooldown phase
+        # and compensate our input data for the energy lost.
+        # the resulting temp data allows us to get a good guess at heater power
+        a, b = self._cooling_curve('cooldown')
         compensated_temps = [self.smoothed_samples[0]]
         total_loss = 0
-        for idx in range(start+1, end+1):
+        for idx in range(heat_start+1, cool_end+1):
             t = self.smoothed_samples[idx]
             new_temp = max(compensated_temps[-1], t-total_loss)  # preclude occasional modeling errors
             compensated_temps.append(new_temp)
@@ -289,28 +300,24 @@ class ControlAutoTune:
             loss = dt * (a*(t - self.env_temp) + b)
             total_loss += loss
 
-        # We can finally start calibrating the model.
-        # Order of calibration:
-        #   1. heater strength (initial guess, fit to compensated)
-        #   2. thermal mass (fit to compensated)
-        #   3. base_cooling (fit to smoothed)
-        #   4. heater strength (fit to smoothed)
-
         config = {
-            'thermal_conductivity': 0.2,
-            'initial_temp': self.smoothed_samples[start],
+            'thermal_conductivity': 0.4,
+            'initial_temp': self.smoothed_samples[heat_start],
             'env_temp': self.env_temp,
             'base_cooling': 0.0,
             'fan_cooling': 0.0
             }
 
-        def binsearch_param(bounds, param, error_fn):
+        # We'll use binary search for every parameter. The following does the lifting for that,
+        # given the initial bounds of the search, the name of the parameter to fit, and a signed error function
+        def binsearch_param(bounds, param, error_fn, start, end):
             binsrch = bin_search_float(*bounds)
             curval = next(binsrch)
             try:
                 while True:
                     config[param] = curval
                     m, model_samples = self._replicate_curve(config, start, end, fan_power=0.0)
+                    self._plot_candidate(model_samples[start:end], start, end-1)
                     error = error_fn(model_samples)
                     if error == 0:
                         break
@@ -318,13 +325,16 @@ class ControlAutoTune:
             except StopIteration:
                 pass
             return curval
-        heater_power = binsearch_param((0,100), 'heater_power', lambda mdl: compensated_temps[-1] - mdl[-1])
+        heater_power = binsearch_param((0,100), 'heater_power', lambda mdl: compensated_temps[cool_end-1] - mdl[cool_end-1], heat_start, cool_end)
+        print('power done')
 
+        self._plot_candidate(compensated_temps, heat_start, cool_end)
         # fitting for thermal conductivity
-        fit_start, fit_end = self.phase_start['heatup' + phase_suffix], self.phase_start['overshoot' + phase_suffix]
-        fit_pivot = (fit_start + fit_end) // 2
+        fit_pivot = (heat_start + cool_start) // 2
         def thermal_mass_error(mdl):
-            idx = self._find_temp(mdl[fit_pivot], 'heatup' + phase_suffix)
+            idx = self._find_temp(mdl[fit_pivot], 'heatup')
+            if fit_pivot == idx:
+                print("found ideal thermal mass")
             return fit_pivot - idx
 
         # alternative: sum of errors during heatup, with ramp-up and wind-down being weighted opposite
@@ -335,14 +345,18 @@ class ControlAutoTune:
         #     for i in range(fit_pivot, fit_end):
         #         error += compensated_temps[i] - mdl[i]
         #     return error
-        th_conduct = binsearch_param((0,1.0), 'thermal_conductivity', thermal_mass_error)
+        th_conduct = binsearch_param((0,1.0), 'thermal_conductivity', thermal_mass_error, heat_start, heat_stop)
+        print('conduct done')
 
-        fit_start, fit_end = self.phase_start['cooldown' + phase_suffix], end
+        # we'll need to tune cooling twice for different index ranges, so new vars
+        fit_start, fit_end = cool_start, cool_end
         def cooling_error(mdl):
             # We can't completely isolate cooling and heater_power, since our model of cooling
-            # will be slightly off. We get around this by first making a (very) educated guess
-            # at the heater power, and only compensate for slight scaling misalignment here
+            # will be slightly off. We get around this by using our (very) educated guess
+            # of heater power, and compensating for slight scaling misalignment here
+            print(mdl)
             model_peak = max(*enumerate(mdl), key=lambda s: s[1] if not s[1] is None else 0)
+            print(model_peak)
             scale = self.smoothed_samples[fit_start] / model_peak[1]
             if scale > 1.3:
                 # too off, try again
@@ -351,11 +365,20 @@ class ControlAutoTune:
             for i in range(fit_start, fit_end):
                 error += mdl[i] * scale - self.smoothed_samples[i]
             return error
-        cooling = binsearch_param((0,1.0), 'base_cooling', cooling_error)
+        cooling = binsearch_param((0,1.0), 'base_cooling', cooling_error, heat_start, cool_end)
 
         # we're almost done, do one more round of fitting for heater power to vertically align peaks
-        binsearch_param((0,100), 'heater_power', lambda mdl: self.smoothed_samples[fit_start] - mdl[fit_start])
+        binsearch_param((0,100), 'heater_power', lambda mdl: self.smoothed_samples[cool_start] - mdl[cool_start], heat_start, cool_start)
         # TODO tune fan_cooling
+        # fit_start, fit_end = self.phase_start['cooldown_fan'], self.phase_start['done']-1
+        # start, end = fit_start, fit_end
+        # cooling = binsearch_param((0,1.0), 'fan_cooling', cooling_error)
+
+        fit_start, _ = self._get_index_range('heatup')
+        _, fit_end = self._get_index_range('cooldown')
+        m, msamples = self._replicate_curve(config, heat_start, cool_end, fan_power=0.0)
+        self._plot_candidate(msamples[heat_start:cool_end], heat_start, cool_end-1)
+
         return config
 
     def _plot_candidate(self, samples, _from, to):
@@ -386,7 +409,7 @@ class ControlAutoTune:
 def load_config(config):
     return ShellCalibrate(config)
 
-def get(filename='sample_trace'):
+def get(filename='heattest_200'):
     class FHeater:
         def get_max_power(self):
             return 1.0
