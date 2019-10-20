@@ -137,6 +137,7 @@ class ControlAutoTune:
         else:
             self.set_pwm(read_time, 0.)
 
+        # TODO: phases need to be determined AFTER smoothing
         if self.phase not in self.phase_start:
             self.phase_start[self.phase] = len(self.raw_samples)-1
 
@@ -320,8 +321,9 @@ class ControlAutoTune:
             try:
                 while True:
                     config[param] = curval
-                    m, model_samples = self._replicate_curve(config, start, end, fan_power=0.0)
-                    self._plot_candidate(model_samples[start:end], start, end-1)
+                    m, model_samples = self._replicate_curve(config, start, end, fan_power=1.0)
+                    if param not in ['heater_power', 'thermal_conductivity', 'base_cooling']:
+                        self._plot_candidate(model_samples[start:end], start, end-1)
                     error = error_fn(model_samples)
                     if error == 0:
                         break
@@ -372,9 +374,8 @@ class ControlAutoTune:
         # we're almost done, do one more round of fitting for heater power to vertically align peaks
         binsearch_param((0,100), 'heater_power', lambda mdl: self.smoothed_samples[cool_start] - mdl[cool_start], heat_start, cool_start)
         # TODO tune fan_cooling
-        # fit_start, fit_end = self.phase_start['cooldown_fan'], self.phase_start['done']-1
-        # start, end = fit_start, fit_end
-        # cooling = binsearch_param((0,1.0), 'fan_cooling', cooling_error)
+        fit_start, fit_end = cool_fan_start, cool_fan_end
+        cooling = binsearch_param((0,1.0), 'fan_cooling', cooling_error, heat_fan_start, cool_fan_end)
 
         fit_start, _ = self._get_index_range('heatup')
         _, fit_end = self._get_index_range('cooldown')

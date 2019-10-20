@@ -22,7 +22,7 @@ class Model(object):
         # heater is at first (innermost) shell, sensor at second-to-last shell, outermost shell is outside
         self.cells = [initial_temp] * cells
         self.thermal_conductivity = thermal_conductivity
-        # we have an affine convective cooling model: (base_cooling + fan_power * fan_cooling)
+        # we lerp between base_cooling and fan_cooling based on fan strength
         # if this turns out to be too simple:
         # FIXME dynamically adjust the effective wind power based on how much heat we're actually losing
         self.base_cooling = base_cooling
@@ -61,7 +61,7 @@ class Model(object):
     def _thermal_conductivity(self, source_idx, target_idx, fan_power):
         if source_idx == len(self.cells)-1 or target_idx == len(self.cells)-1:
             # contact to outside world
-            return self.base_cooling + fan_power * self.fan_cooling
+            return (1.0-fan_power) * self.base_cooling + fan_power * self.fan_cooling
         return self.thermal_conductivity
 
     def plot(self):
