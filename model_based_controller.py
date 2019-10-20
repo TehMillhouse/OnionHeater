@@ -15,21 +15,21 @@ class ModelBasedController(object):
         self.fan = config.get_printer().lookup_object('fan')
 
         # heater power in degrees per second
-        self.heater_output = config.getfloat('model_heater_power', minval=0)
+        self.heater_output = config.getfloat('model_heater_power', minval=0.0)
         # number of cells in thermal simulation
         metal_cells = config.getint('model_metal_cells', 6, minval=2)
         # minimum number of simulation passes per second
         passes_per_sec = config.getint('model_passes_per_sec', 3)
         # heat dissipation rate within metal
-        thermal_conductivity = config.getfloat('model_thermal_conductivity', minval=0, maxval=1)
+        thermal_conductivity = config.getfloat('model_thermal_conductivity', minval=0.0, maxval=1.0)
         # heat - air dissipation rate
-        base_cooling = config.getfloat('model_base_cooling', minval=0, maxval=1)
+        base_cooling = config.getfloat('model_base_cooling', minval=0.0, maxval=1.0)
         # additional heat dissipation effected by fan at 100%
-        fan_cooling = config.getfloat('model_fan_cooling', base_cooling, minval=0, maxval=(1-base_cooling))
+        fan_cooling = config.getfloat('model_fan_cooling', base_cooling, minval=0.0, maxval=1.0)
         # TODO get rid of initial_temp and env_temp
-        initial_temp = config.getfloat('model_initial_temp', 21.4, minval=0)
-        env_temp = config.getfloat('model_env_temp', 21.4, minval=0)
-        self.internal_gradient = config.getfloat('model_steadystate_offset', 0)
+        initial_temp = config.getfloat('model_initial_temp', 21.4, minval=0.0)
+        env_temp = config.getfloat('model_env_temp', 21.4, minval=0.0)
+        self.internal_gradient = config.getfloat('model_steadystate_offset', 0.0)
 
         self.model = model.Model(self.heater_output, initial_temp, thermal_conductivity, base_cooling, fan_cooling, env_temp, metal_cells, passes_per_sec)
         self.current_heater_pwm = 0.0
