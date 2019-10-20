@@ -64,16 +64,22 @@ class ShellCalibrate:
         heater.set_control(old_control)
         if write_file:
             calibrate.write_file('/tmp/heattest.txt')
-        config = calibrate.calc_params()
+        try:  # TODO REMOVE
+            config = calibrate.calc_params()
 
-        logging.info("Autotune: model config: " + str(config))
-        self.gcode.respond_info("Model parameters:\n"
-                + "\n".join(['model_' + setting + ": " + str(val) for setting, val in config.items()]))
-        # Store results for SAVE_CONFIG
-        configfile = self.printer.lookup_object('configfile')
-        for key, val in config.items():
-            setting = 'model_' + key
-            configfile.set(heater_name, setting, str(val))
+            logging.info("Autotune: model config: " + str(config))
+            self.gcode.respond_info("Model parameters:\n"
+                    + "\n".join(['model_' + setting + ": " + str(val) for setting, val in config.items()]))
+            # Store results for SAVE_CONFIG
+            configfile = self.printer.lookup_object('configfile')
+            for key, val in config.items():
+                setting = 'model_' + key
+                configfile.set(heater_name, setting, str(val))
+        except e:  # TODO REMOVE
+            with open('/tmp/error','wb') as f:
+                f.write(str(e))
+            logging.error(e)
+            raise e
 
 class ControlAutoTune:
     # These are the variables we need to find
