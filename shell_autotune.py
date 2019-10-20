@@ -182,6 +182,9 @@ class ControlAutoTune:
         # curve between (start_idx, end_idx) in smoothed_samples
         # pads the resulting list with start_idx many None values to make index calculation easier
 
+        overwritten = model_config['initial_temp']
+        model_config['initial_temp'] = self.smoothed_samples[start_idx]
+
         m = model.Model(**model_config)
         time = self.timestamps[start_idx]
         pwm_idx = 0
@@ -199,6 +202,7 @@ class ControlAutoTune:
             dt = self.timestamps[tick] - self.timestamps[tick-1]
             new_temp = m.advance_model(dt, self.pwm_samples[pwm_idx][1], fan_power)
             model_temp_samples.append(new_temp)
+        model_config['initial_temp'] = overwritten
         return (m, model_temp_samples)
 
     def _deriv_at(self, idx):
@@ -325,10 +329,10 @@ class ControlAutoTune:
             except StopIteration:
                 pass
             return curval
-        heater_power = binsearch_param((0,100), 'heater_power', lambda mdl: compensated_temps[cool_end-1] - mdl[cool_end-1], heat_start, cool_end)
+        heater_power = binsearch_param((0,100), 'heater_power',
+                lambda mdl: compensated_temps[cool_end-1] - mdl[cool_end-1], heat_start, cool_end)
         print('power done')
 
-        self._plot_candidate(compensated_temps, heat_start, cool_end)
         # fitting for thermal conductivity
         fit_pivot = (heat_start + cool_start) // 2
         def thermal_mass_error(mdl):
@@ -354,9 +358,7 @@ class ControlAutoTune:
             # We can't completely isolate cooling and heater_power, since our model of cooling
             # will be slightly off. We get around this by using our (very) educated guess
             # of heater power, and compensating for slight scaling misalignment here
-            print(mdl)
             model_peak = max(*enumerate(mdl), key=lambda s: s[1] if not s[1] is None else 0)
-            print(model_peak)
             scale = self.smoothed_samples[fit_start] / model_peak[1]
             if scale > 1.3:
                 # too off, try again
