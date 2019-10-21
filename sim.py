@@ -20,6 +20,16 @@ class FakeConfig(object):
     def __init__(self, model_config):
         self.cfg = model_config
 
+    class FakePrinter(object):
+        def get_status(self, none):
+            return {'speed': 0.0}
+
+        def lookup_object(self, string):
+            return self
+
+    def get_printer(self):
+        return FakeConfig.FakePrinter()
+
     def getfloat(self, string, *args, **kwargs):
         assert string.startswith('model_')
         string = string[len('model_'):]
