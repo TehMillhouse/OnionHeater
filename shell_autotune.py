@@ -239,6 +239,8 @@ class ControlAutoTune:
     def calc_params(self):
         self.env_temp = self.smoothed_samples[0]
         config = self._fit_model()
+        # we need to derive the internal hotend gradients. These are emergent properties,
+        # not model parameters
 
         # start by initializing the model to 200 degrees, and run it a handfull of seconds
         # always putting back in what is lost through convection
@@ -253,7 +255,13 @@ class ControlAutoTune:
             tmp_model.cells[0] += loss
         # The value we actually care about is how much the controller needs to offset its target
         # this value scales with temperature differential at the hotend
-        config['steadystate_offset'] = (self.calibrate_temp - tmp_model.cells[-2]) / (self.calibrate_temp - self.env_temp)
+        config['steadystate_offset_base'] = (self.calibrate_temp - tmp_model.cells[-2]) / (self.calibrate_temp - self.env_temp)
+        # ...and do the whole dance again, but with fans on
+        for tick in range(500):
+            tmp_model.advance_model(dt=0.2, heater_pwm_until_now=0.0, fan_power=1.0)
+            loss = initial_energy - sum(tmp_model.cells[:-1])
+            tmp_model.cells[0] += loss
+        config['steadystate_offset_fans'] =  (self.calibrate_temp - tmp_model.cells[-2]) / (self.calibrate_temp - self.env_temp)
         return config
 
     def _cooldown_target(self):
@@ -315,13 +323,13 @@ class ControlAutoTune:
 
         # We'll use binary search for every parameter. The following does the lifting for that,
         # given the initial bounds of the search, the name of the parameter to fit, and a signed error function
-        def binsearch_param(bounds, param, error_fn, start, end):
+        def binsearch_param(bounds, param, error_fn, start, end, fan_power=0.0):
             binsrch = bin_search_float(*bounds)
             curval = next(binsrch)
             try:
                 while True:
                     config[param] = curval
-                    m, model_samples = self._replicate_curve(config, start, end, fan_power=1.0)
+                    m, model_samples = self._replicate_curve(config, start, end, fan_power)
                     if param not in ['heater_power', 'thermal_conductivity', 'base_cooling']:
                         self._plot_candidate(model_samples[start:end], start, end-1)
                     error = error_fn(model_samples)
@@ -354,33 +362,40 @@ class ControlAutoTune:
         th_conduct = binsearch_param((0,1.0), 'thermal_conductivity', thermal_mass_error, heat_start, heat_stop)
         print('conduct done')
 
-        # we'll need to tune cooling twice for different index ranges, so new vars
-        fit_start, fit_end = cool_start, cool_end
         def cooling_error(mdl):
             # We can't completely isolate cooling and heater_power, since our model of cooling
             # will be slightly off. We get around this by using our (very) educated guess
             # of heater power, and compensating for slight scaling misalignment here
             model_peak = max(*enumerate(mdl), key=lambda s: s[1] if not s[1] is None else 0)
-            scale = self.smoothed_samples[fit_start] / model_peak[1]
+            scale = self.smoothed_samples[cool_start] / model_peak[1]
             if scale > 1.3:
                 # too off, try again
                 scale = 1.0
             error = 0
-            for i in range(fit_start, fit_end):
+            for i in range(cool_start, cool_end):
                 error += mdl[i] * scale - self.smoothed_samples[i]
             return error
         cooling = binsearch_param((0,1.0), 'base_cooling', cooling_error, heat_start, cool_end)
 
         # we're almost done, do one more round of fitting for heater power to vertically align peaks
         binsearch_param((0,100), 'heater_power', lambda mdl: self.smoothed_samples[cool_start] - mdl[cool_start], heat_start, cool_start)
-        # TODO tune fan_cooling
-        fit_start, fit_end = cool_fan_start, cool_fan_end
-        cooling = binsearch_param((0,1.0), 'fan_cooling', cooling_error, heat_fan_start, cool_fan_end)
+        print('old done')
 
-        fit_start, _ = self._get_index_range('heatup')
-        _, fit_end = self._get_index_range('cooldown')
-        m, msamples = self._replicate_curve(config, heat_start, cool_end, fan_power=0.0)
-        self._plot_candidate(msamples[heat_start:cool_end], heat_start, cool_end-1)
+        # TODO tune fan_cooling
+        def fan_cooling_error(mdl):
+            # We can't completely isolate cooling and heater_power, since our model of cooling
+            # will be slightly off. We get around this by using our (very) educated guess
+            # of heater power, and compensating for slight scaling misalignment here
+            model_peak = max(*enumerate(mdl), key=lambda s: s[1] if not s[1] is None else 0)
+            error = 0
+            for i in range(cool_fan_start, cool_fan_end):
+                error += mdl[i] - self.smoothed_samples[i]
+            return error
+        cooling = binsearch_param((0,1.0), 'fan_cooling', fan_cooling_error, heat_fan_start, cool_fan_end, fan_power=1.0)
+
+        _, msamples = self._replicate_curve(config, heat_start, cool_end, fan_power=0.0)
+        _, fansamples = self._replicate_curve(config, heat_fan_start, cool_fan_end, fan_power=1.0)
+        self._plot_candidate(msamples[heat_start:cool_end] + fansamples[heat_fan_start:cool_fan_end], heat_start, cool_fan_end-1)
 
         return config
 

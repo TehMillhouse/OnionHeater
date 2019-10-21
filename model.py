@@ -53,10 +53,13 @@ class Model(object):
         return self.cells[-2]
 
     def adjust_to_measurement(self, sensor_temp):
-        predicted_temp = self.cells[-2]
         if sensor_temp < self.env_temp:
             self.env_temp = sensor_temp
-        self.cells[-2] = sensor_temp
+        # We want to exaggerate unmodeled external effects in order to promptly compensate for them
+        predicted_temp = self.cells[-2]
+        delta = (predicted_temp - sensor_temp)
+        self.cells[-2] -= 1.5*delta
+        self.cells[-3] -= 0.7*delta
 
     def _thermal_conductivity(self, source_idx, target_idx, fan_power):
         if source_idx == len(self.cells)-1 or target_idx == len(self.cells)-1:

@@ -24,28 +24,28 @@ class ModelBasedController(object):
         thermal_conductivity = config.getfloat('model_thermal_conductivity', minval=0.0, maxval=1.0)
         # heat - air dissipation rate
         base_cooling = config.getfloat('model_base_cooling', minval=0.0, maxval=1.0)
-        # additional heat dissipation effected by fan at 100%
         fan_cooling = config.getfloat('model_fan_cooling', base_cooling, minval=0.0, maxval=1.0)
         # TODO get rid of initial_temp and env_temp
         initial_temp = config.getfloat('model_initial_temp', 21.4, minval=0.0)
         env_temp = config.getfloat('model_env_temp', 21.4, minval=0.0)
-        self.internal_gradient = config.getfloat('model_steadystate_offset', 0.0)
+        self.internal_gradients = config.getfloat('model_steadystate_offset_base', 0.0), config.getfloat('model_steadystate_offset_fans', 0.0)
 
         self.model = model.Model(self.heater_output, initial_temp, thermal_conductivity, base_cooling, fan_cooling, env_temp, metal_cells, passes_per_sec)
         self.current_heater_pwm = 0.0
         # we keep a tally of how long on avg a control tick lasts
         self.last_read_times = [-4, -3, -2, -1]
 
-    def stable_state_offset(self, target_temp):
+    def stable_state_offset(self, target_temp, fan_power):
         # internal gradients require us to target a higher temperature, which in turn
         # increases the internal gradient! Since the internal gradients in an autotuned
         # model can get quite big, we need to solve this correctly.
+        effective_gradient = fan_power * self.internal_gradients[1] + (1-fan_power) * self.internal_gradients[0]
 
         # we have
-        #     orig_trg = new_trg - (new_trg - env_temp) * internal_gradient
-        # <=> new_trg = orig_trg - (env_temp * internal_gradient) / (1 - internal_gradient)
+        #     orig_trg = new_trg - (new_trg - env_temp) * gradient
+        # <=> new_trg = orig_trg - (env_temp * gradient) / (1 - gradient)
         # Solving for new_trg and subtracting the old target temp yields
-        return (target_temp - self.model.env_temp * self.internal_gradient) / (1 - self.internal_gradient) - target_temp
+        return (target_temp - self.model.env_temp * effective_gradient) / (1 - effective_gradient) - target_temp
 
 
     def temperature_update(self, read_time, temp, target_temp):
@@ -64,7 +64,7 @@ class ModelBasedController(object):
         degrees_needed = (target_temp - model_avg_temp \
                 # since we're constantly losing heat, there is always an internal gradient in the hotend.
                 # if we don't compensate for this, we'll have a steady state error
-                + self.stable_state_offset(target_temp)  \
+                + self.stable_state_offset(target_temp, fan_power)  \
                 ) * (len(self.model.cells)-1)
         # if the expected tick length is long, we need less heat
         self.current_heater_pwm = clamp(degrees_needed / (self.heater_output * tick_len), 0.0, self.heater_max_power)
