@@ -3,18 +3,9 @@ import math
 TRACE = True
 
 class Model(object):
-    def __init__(self, heater_power, initial_temp, thermal_conductivity, base_cooling, fan_cooling, env_temp, metal_cells=6, passes_per_sec=3):
-        """Create thermal model of hotend.
-
-        heater_power: how many degrees per second the heater can output over the hotend
-        metal_cells: how many different locations in the heater block to track. affects
-            thermal mass and dissipation speed in the model
-        passes_per_sec: minimum number of dissipation passes computed per second. Higher is more accurate
-        initial_temp: how hot is the hotend *right now*?
-        """
+    def __init__(self, heater_power, initial_temp, thermal_conductivity, base_cooling, metal_cells=6):
         cells = int(metal_cells + 1)  # there's an additional outer shell filled with air
         self.time = 0
-        self.passes_per_sec = passes_per_sec
         self.cells = [initial_temp] * cells
         # Since heat conductivity of metal is pretty high, the heater is effectively outputting
         # the measured degrees per second over *all* cells
@@ -22,15 +13,22 @@ class Model(object):
         # heater is at first (innermost) shell, sensor at second-to-last shell, outermost shell is outside
         self.cells = [initial_temp] * cells
         self.thermal_conductivity = thermal_conductivity
-        # we lerp between base_cooling and fan_cooling based on fan strength
-        # if this turns out to be too simple:
-        # FIXME dynamically adjust the effective wind power based on how much heat we're actually losing
         self.base_cooling = base_cooling
-        self.fan_cooling = fan_cooling
-        self.env_temp = env_temp
+        self.egress_samples = [0.0, 0.0, 0.0]
+        self._env_temp = None
         if TRACE:
             self.history = []
             self.pwm_history = []
+
+    @property
+    def env_temp(self):
+        if self._env_temp is None:
+            return 21.0
+        return self._env_temp
+
+    @property
+    def egress_p_sec(self):
+        return float(sum(self.egress_samples)) / len(self.egress_samples)
 
     def config(self):
         return {
@@ -39,33 +37,67 @@ class Model(object):
                 'passes_per_sec': self.passes_per_sec,
                 'thermal_conductivity': self.thermal_conductivity,
                 'base_cooling': self.base_cooling,
-                'fan_cooling': self.fan_cooling
                 }
 
-    def advance_model(self, dt, heater_pwm_until_now, fan_power=0.0):
-        passes = int(max(1, math.floor(dt * self.passes_per_sec)))
+    def avg_energy(self):
+        return sum(self.cells[:-1]) / (len(self.cells)-1)
+
+    def advance_model(self, dt, heater_pwm_until_now, sensor_temp):
+        if self._env_temp is None or sensor_temp < self._env_temp:
+            self._env_temp = sensor_temp
+
+        old_en = self.avg_energy()
+        passes = int(max(1, math.floor(dt * 3)))  # ensure at least 3 dissipation passes per second
         for _ in range(passes):
-            self.dissipate_temps(dt / passes, heater_pwm_until_now, fan_power)
+            self.dissipate_temps(float(dt) / passes, heater_pwm_until_now)
         self.time += dt
+        new_en = self.avg_energy() - (dt * heater_pwm_until_now * self.heater_power) / (len(self.cells)-1)
+
+        # expected egress: old_en - new_en
+        # actual nonmodelled egress: (old_en - sensor_temp) - expected_egress
+        # assuming the model is brought to ground truth on every tick
+        self.egress_samples.append((- sensor_temp + new_en) / dt)
+        self.egress_samples = self.egress_samples[1:]
+
+        predicted_temp = self.cells[-2]
+        delta = (predicted_temp - sensor_temp)
+        MAX_EXAGG = 5
+        # cap exaggeration at MAX_EXAGG degrees
+        if abs(1.3*delta) > MAX_EXAGG:
+            sgn = -1 if delta < 0 else 1
+            self.cells[-2] -= sgn * max(MAX_EXAGG, abs(delta))
+        else:
+            self.cells[-2] -= 1.3*delta
+            self.cells[-3] -= 0.7*delta
+
         if TRACE:
             self.history.append(list(self.cells))
             self.pwm_history.append(heater_pwm_until_now)
         return self.cells[-2]
 
-    def adjust_to_measurement(self, sensor_temp):
-        if sensor_temp < self.env_temp:
-            self.env_temp = sensor_temp
-        # We want to exaggerate unmodeled external effects in order to promptly compensate for them
-        predicted_temp = self.cells[-2]
-        delta = (predicted_temp - sensor_temp)
-        self.cells[-2] -= 1.5*delta
-        self.cells[-3] -= 0.7*delta
-
-    def _thermal_conductivity(self, source_idx, target_idx, fan_power):
+    def _thermal_conductivity(self, source_idx, target_idx):
         if source_idx == len(self.cells)-1 or target_idx == len(self.cells)-1:
             # contact to outside world
-            return (1.0-fan_power) * self.base_cooling + fan_power * self.fan_cooling
+            return self.base_cooling
         return self.thermal_conductivity
+
+    def dissipate_temps(self, dt, heater_pwm):
+        new_cells = list(self.cells)
+        for target in range(len(self.cells)):
+            temp_diff = 0
+            for source in [target-1, target+1]:
+                if source < 0 or source >= len(self.cells):
+                    continue
+                gradient_from_source = self.cells[source] - self.cells[target]
+                thermal_conductivity = self._thermal_conductivity(source, target)
+                temp_diff += thermal_conductivity * gradient_from_source
+            if target == 0:
+                # target shell is heater shell
+                temp_diff += heater_pwm * self.heater_power
+            new_cells[target] = new_cells[target] + dt * temp_diff
+            # the outermost shell is always at environment temp
+            new_cells[-1] = self.env_temp
+        self.cells = new_cells
 
     def plot(self):
         self._plot(self.history, self.pwm_history)
@@ -84,22 +116,3 @@ class Model(object):
         plt.bar(time, [y * 100 for y in pwm_output], color="#aaaaaa20", width=0.25, label='Heater power')
         plt.legend(loc='upper left')
         plt.show()
-
-    def dissipate_temps(self, dt, heater_pwm, fan_power=0.0):
-        new_cells = list(self.cells)
-        for target in range(len(self.cells)):
-            temp_diff = 0
-            for source in [target-1, target+1]:
-                if source < 0 or source >= len(self.cells):
-                    continue
-                dist = abs(source - target)
-                gradient_from_source = self.cells[source] - self.cells[target]
-                thermal_conductivity = self._thermal_conductivity(source, target, fan_power)
-                temp_diff += thermal_conductivity * gradient_from_source / (dist * dist)
-            if target == 0:
-                # target shell is heater shell
-                temp_diff += heater_pwm * self.heater_power
-            new_cells[target] = new_cells[target] + dt * temp_diff
-            # the outermost shell is always at environment temp
-            new_cells[-1] = self.env_temp
-        self.cells = new_cells

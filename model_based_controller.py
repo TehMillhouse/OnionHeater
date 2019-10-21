@@ -12,46 +12,44 @@ class ModelBasedController(object):
         self.heater = heater
         self.heater_max_power = heater.get_max_power()
         self.config = config
-        self.fan = config.get_printer().lookup_object('fan')
 
         # heater power in degrees per second
         self.heater_output = config.getfloat('model_heater_power', minval=0.0)
         # number of cells in thermal simulation
         metal_cells = config.getint('model_metal_cells', 6, minval=2)
-        # minimum number of simulation passes per second
-        passes_per_sec = config.getint('model_passes_per_sec', 3)
         # heat dissipation rate within metal
         thermal_conductivity = config.getfloat('model_thermal_conductivity', minval=0.0, maxval=1.0)
         # heat - air dissipation rate
         base_cooling = config.getfloat('model_base_cooling', minval=0.0, maxval=1.0)
-        fan_cooling = config.getfloat('model_fan_cooling', base_cooling, minval=0.0, maxval=1.0)
         # TODO get rid of initial_temp and env_temp
         initial_temp = config.getfloat('model_initial_temp', 21.4, minval=0.0)
         env_temp = config.getfloat('model_env_temp', 21.4, minval=0.0)
-        self.internal_gradients = config.getfloat('model_steadystate_offset_base', 0.0), config.getfloat('model_steadystate_offset_fans', 0.0)
+        self.internal_gradient = config.getfloat('model_steadystate_offset_base', 0.0)
 
-        self.model = model.Model(self.heater_output, initial_temp, thermal_conductivity, base_cooling, fan_cooling, env_temp, metal_cells, passes_per_sec)
+        self.model = model.Model(self.heater_output, initial_temp, thermal_conductivity, base_cooling, metal_cells)
         self.current_heater_pwm = 0.0
         # we keep a tally of how long on avg a control tick lasts
         self.last_read_times = [-4, -3, -2, -1]
 
-    def stable_state_offset(self, target_temp, fan_power):
+    def stable_state_offset(self, target_temp):
         # internal gradients require us to target a higher temperature, which in turn
         # increases the internal gradient! Since the internal gradients in an autotuned
-        # model can get quite big, we need to solve this correctly.
-        effective_gradient = fan_power * self.internal_gradients[1] + (1-fan_power) * self.internal_gradients[0]
+        # model can get quite big, we need to solve this problem
+
+        # Due to the nonlinearity of hotends, we can't know in advance how high this will end up being,
+        # but we need some sort of prior / estimation
+        est_gradient = self.model.egress_p_sec * (len(self.model.cells)-1) / 2.0
+        # est_gradient = (self.model.avg_energy() - self.model.cells[-2]) / (self.model.cells[-2] - self.model.env_temp) * (target_temp - self.model.env_temp)
 
         # we have
         #     orig_trg = new_trg - (new_trg - env_temp) * gradient
         # <=> new_trg = orig_trg - (env_temp * gradient) / (1 - gradient)
         # Solving for new_trg and subtracting the old target temp yields
-        return (target_temp - self.model.env_temp * effective_gradient) / (1 - effective_gradient) - target_temp
+        return (target_temp - self.model.env_temp * est_gradient) / (1 - est_gradient) - target_temp
 
 
     def temperature_update(self, read_time, temp, target_temp):
-        fan_power = self.fan.get_status(None)['speed']
-        self.model.advance_model(read_time - self.last_read_times[-1], self.current_heater_pwm, fan_power)
-        self.model.adjust_to_measurement(temp)
+        self.model.advance_model(read_time - self.last_read_times[-1], self.current_heater_pwm, temp)
 
         # TODO: Is this really needed?
         self.last_read_times.append(read_time)
@@ -60,11 +58,11 @@ class ModelBasedController(object):
         tick_len = sum(tick_lens) / len(tick_lens)
 
         # now calculate how much heat we still need to dump into the hotend
-        model_avg_temp = sum(self.model.cells[:-1]) / (len(self.model.cells)-1)
-        degrees_needed = (target_temp - model_avg_temp \
+        degrees_needed = (target_temp - self.model.avg_energy() \
                 # since we're constantly losing heat, there is always an internal gradient in the hotend.
                 # if we don't compensate for this, we'll have a steady state error
-                + self.stable_state_offset(target_temp, fan_power)  \
+                + self.stable_state_offset(target_temp) \
+                + self.model.egress_p_sec  \
                 ) * (len(self.model.cells)-1)
         # if the expected tick length is long, we need less heat
         self.current_heater_pwm = clamp(degrees_needed / (self.heater_output * tick_len), 0.0, self.heater_max_power)
